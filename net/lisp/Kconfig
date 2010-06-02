@@ -1,0 +1,5 @@
+config LISP
+    tristate "Locator/ID Separation ProtocoL (LISP) (EXPERIMENTAL)"
+    depends on INET && EXPERIMENTAL
+    help
+      Locator/ID Separation Protocol
