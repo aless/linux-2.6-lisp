@@ -19,12 +19,92 @@
 #include <net/inet_sock.h>
 #include <net/inet_common.h>
 #include <net/netns/generic.h>
+#include <linux/device.h>
 
 
 static int lisp_net_id __read_mostly;
 struct lisp_net {
 	struct net_device *lisp_dev;
 };
+
+/*****************************************************************************
+ * LISP socket
+ *****************************************************************************/
+
+static int lisp_release(struct socket *sock)
+{
+	struct sock *sk = sock->sk;
+
+	lock_sock(sk);
+	sock_orphan(sk);
+	release_sock(sk);
+	sock_put(sk);
+
+	return 0;
+}
+
+struct lisp_sock {
+	struct sock sk;
+};
+
+static struct proto lisp_proto = {
+	.name		= "PF_LISP",
+	.owner		= THIS_MODULE,
+	.obj_size	= sizeof(struct lisp_sock),
+};
+
+static const struct proto_ops lisp_ops = {
+	.family		= PF_INET,
+	.owner		= THIS_MODULE,
+	.release	= lisp_release,
+	.bind		= sock_no_bind,
+	.connect	= sock_no_connect,
+	.socketpair	= sock_no_socketpair,
+	.accept		= sock_no_accept,
+	.getname	= sock_no_getname,
+	.poll		= sock_no_poll,
+	.ioctl		= sock_no_ioctl,
+	.listen		= sock_no_listen,
+	.shutdown	= sock_no_shutdown,
+	.setsockopt	= sock_no_setsockopt,
+	.getsockopt	= sock_no_getsockopt,
+	.sendmsg	= sock_no_sendmsg,
+	.recvmsg	= sock_no_recvmsg,
+	.mmap		= sock_no_mmap,
+};
+
+
+static int lisp_create(struct net *net, struct socket *sock,
+		       int protocol, int kern)
+{
+	int error;
+	struct sock *sk = NULL;
+
+	error = -ENOMEM;
+	sk = sk_alloc(net, PF_LISP, GFP_KERNEL, &lisp_proto);
+	if (!sk)
+		goto out;
+
+	sock_init_data(sock, sk);
+
+	sock->state  = SS_UNCONNECTED;
+	sock->ops    = &lisp_ops;
+
+	error = 0;
+
+out:
+	return error;
+}
+
+static const struct net_proto_family lisp_proto_family = {
+	.family	= PF_LISP,
+	.create	= lisp_create,
+	.owner	= THIS_MODULE,
+};
+
+/*****************************************************************************
+ * LISP net device
+ *****************************************************************************/
 
 static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 {
@@ -109,8 +189,14 @@ static int __init lisp_init(void)
 	if (err)
 		goto out_unregister_pernet_dev;
 
+	err = sock_register(&lisp_proto_family);
+	if (err)
+		goto out_unregister_sock;
+
 out:
 	return err;
+out_unregister_sock:
+	sock_unregister(PF_LISP);
 out_unregister_pernet_dev:
 	unregister_pernet_device(&lisp_net_ops);
 	goto out;
@@ -119,6 +205,7 @@ out_unregister_pernet_dev:
 static void __exit lisp_exit(void)
 {
 	unregister_pernet_device(&lisp_net_ops);
+	sock_unregister(PF_LISP);
 }
 
 module_init(lisp_init);
