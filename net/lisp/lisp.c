@@ -20,7 +20,9 @@
 #include <net/inet_common.h>
 #include <net/netns/generic.h>
 #include <linux/device.h>
-
+#include <net/udp.h>
+#include <net/tcp_states.h>
+#include <net/inet_hashtables.h>
 
 static int lisp_net_id __read_mostly;
 struct lisp_net {
@@ -43,21 +45,134 @@ static int lisp_release(struct socket *sock)
 	return 0;
 }
 
+/* from udp.c */
+static int ipv4_rcv_saddr_equal(const struct sock *sk1, const struct sock *sk2)
+{
+	struct inet_sock *inet1 = inet_sk(sk1), *inet2 = inet_sk(sk2);
+
+	return (!ipv6_only_sock(sk2)  &&
+		 (!inet1->inet_rcv_saddr || !inet2->inet_rcv_saddr ||
+		   inet1->inet_rcv_saddr == inet2->inet_rcv_saddr));
+}
+
+/* from udp.c */
+static unsigned int udp4_portaddr_hash(struct net *net, __be32 saddr,
+				       unsigned int port)
+{
+	return jhash_1word((__force u32)saddr, net_hash_mix(net)) ^ port;
+}
+
+/* from udp.c */
+int udp_v4_get_port(struct sock *sk, unsigned short snum)
+{
+	unsigned int hash2_nulladdr =
+		udp4_portaddr_hash(sock_net(sk), htonl(INADDR_ANY), snum);
+	unsigned int hash2_partial =
+		udp4_portaddr_hash(sock_net(sk), inet_sk(sk)->inet_rcv_saddr, 0);
+
+	/* precompute partial secondary hash */
+	udp_sk(sk)->udp_portaddr_hash = hash2_partial;
+	return udp_lib_get_port(sk, snum, ipv4_rcv_saddr_equal, hash2_nulladdr);
+}
+
+/* based on inet_bind */
+static int lisp_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+{
+	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
+	struct sock *sk = sock->sk;
+	struct inet_sock *inet = inet_sk(sk);
+	unsigned short snum;
+	int chk_addr_ret;
+	int err;
+
+	err = -EINVAL;
+	if (addr_len < sizeof(struct sockaddr_in))
+		goto out;
+
+	chk_addr_ret = inet_addr_type(sock_net(sk), addr->sin_addr.s_addr);
+
+	/* Not specified by any standard per-se, however it breaks too
+	 * many applications when removed.  It is unfortunate since
+	 * allowing applications to make a non-local bind solves
+	 * several problems with systems using dynamic addressing.
+	 * (ie. your servers still start up even if your ISDN link
+	 *  is temporarily down)
+	 */
+	err = -EADDRNOTAVAIL;
+	if (!sysctl_ip_nonlocal_bind &&
+	    !(inet->freebind || inet->transparent) &&
+	    addr->sin_addr.s_addr != htonl(INADDR_ANY) &&
+	    chk_addr_ret != RTN_LOCAL &&
+	    chk_addr_ret != RTN_MULTICAST &&
+	    chk_addr_ret != RTN_BROADCAST)
+		goto out;
+
+	snum = ntohs(addr->sin_port);
+	err = -EACCES;
+	if (snum && snum < PROT_SOCK && !capable(CAP_NET_BIND_SERVICE))
+		goto out;
+
+	/*      We keep a pair of addresses. rcv_saddr is the one
+	 *      used by hash lookups, and saddr is used for transmit.
+	 *
+	 *      In the BSD API these are the same except where it
+	 *      would be illegal to use them (multicast/broadcast) in
+	 *      which case the sending device address is used.
+	 */
+	lock_sock(sk);
+
+	/* Check these errors (active socket, double bind). */
+	err = -EINVAL;
+	if (sk->sk_state != TCP_CLOSE || inet->inet_num)
+		goto out_release_sock;
+
+	inet->inet_rcv_saddr = inet->inet_saddr = addr->sin_addr.s_addr;
+	if (chk_addr_ret == RTN_MULTICAST || chk_addr_ret == RTN_BROADCAST)
+		inet->inet_saddr = 0;  /* Use device */
+
+	/* Make sure we are allowed to bind here. */
+	if (sk->sk_prot->get_port(sk, snum)) {
+		inet->inet_saddr = inet->inet_rcv_saddr = 0;
+		err = -EADDRINUSE;
+		goto out_release_sock;
+	}
+
+	if (inet->inet_rcv_saddr)
+		sk->sk_userlocks |= SOCK_BINDADDR_LOCK;
+	if (snum)
+		sk->sk_userlocks |= SOCK_BINDPORT_LOCK;
+	inet->inet_sport = htons(inet->inet_num);
+	inet->inet_daddr = 0;
+	inet->inet_dport = 0;
+	sk_dst_reset(sk);
+	err = 0;
+
+out_release_sock:
+	release_sock(sk);
+out:
+	return err;
+}
+
 struct lisp_sock {
-	struct sock sk;
+	struct udp_sock sk;
 };
 
 static struct proto lisp_proto = {
 	.name		= "PF_LISP",
 	.owner		= THIS_MODULE,
 	.obj_size	= sizeof(struct lisp_sock),
+	.close		= udp_lib_close,
+	.hash		= udp_lib_hash,
+	.unhash		= udp_lib_unhash,
+	.get_port	= udp_v4_get_port,
+	.h.udp_table	= &udp_table,
 };
 
 static const struct proto_ops lisp_ops = {
 	.family		= PF_INET,
 	.owner		= THIS_MODULE,
-	.release	= lisp_release,
-	.bind		= sock_no_bind,
+	.release	= inet_release,
+	.bind		= lisp_bind,
 	.connect	= sock_no_connect,
 	.socketpair	= sock_no_socketpair,
 	.accept		= sock_no_accept,
@@ -77,10 +192,10 @@ static const struct proto_ops lisp_ops = {
 static int lisp_create(struct net *net, struct socket *sock,
 		       int protocol, int kern)
 {
-	int error;
+	int err;
 	struct sock *sk = NULL;
 
-	error = -ENOMEM;
+	err = -ENOMEM;
 	sk = sk_alloc(net, PF_LISP, GFP_KERNEL, &lisp_proto);
 	if (!sk)
 		goto out;
@@ -90,10 +205,19 @@ static int lisp_create(struct net *net, struct socket *sock,
 	sock->state  = SS_UNCONNECTED;
 	sock->ops    = &lisp_ops;
 
-	error = 0;
+	lock_sock(sk);
+
+	sk->sk_protocol	   = protocol;
+	sk->sk_destruct	   = inet_sock_destruct;
+
+	release_sock(sk);
+
+	sk_refcnt_debug_inc(sk);
+
+	err = 0;
 
 out:
-	return error;
+	return err;
 }
 
 static const struct net_proto_family lisp_proto_family = {
