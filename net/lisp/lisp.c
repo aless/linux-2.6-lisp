@@ -196,7 +196,7 @@ static int lisp_create(struct net *net, struct socket *sock,
 	struct sock *sk = NULL;
 
 	err = -ENOMEM;
-	sk = sk_alloc(net, PF_LISP, GFP_KERNEL, &lisp_proto);
+	sk = sk_alloc(net, PF_INET, GFP_KERNEL, &lisp_proto);
 	if (!sk)
 		goto out;
 
