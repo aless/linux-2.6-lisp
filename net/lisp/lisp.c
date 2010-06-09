@@ -33,18 +33,6 @@ struct lisp_net {
  * LISP socket
  *****************************************************************************/
 
-static int lisp_release(struct socket *sock)
-{
-	struct sock *sk = sock->sk;
-
-	lock_sock(sk);
-	sock_orphan(sk);
-	release_sock(sk);
-	sock_put(sk);
-
-	return 0;
-}
-
 /* from udp.c */
 static int ipv4_rcv_saddr_equal(const struct sock *sk1, const struct sock *sk2)
 {
