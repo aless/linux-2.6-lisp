@@ -21,8 +21,14 @@
 #include <net/netns/generic.h>
 #include <linux/device.h>
 #include <net/udp.h>
+#include <net/sock.h>
+#include <net/ip.h>
 #include <net/tcp_states.h>
 #include <net/inet_hashtables.h>
+
+#define PRINTK(_fmt, args...) printk(KERN_INFO "lisp: " _fmt, ##args)
+
+#define LISP_ENCAPTYPE_UDP 1
 
 static int lisp_net_id __read_mostly;
 struct lisp_net {
@@ -141,6 +147,28 @@ out:
 	return err;
 }
 
+/*
+* =0 if successfull or skb was discarded
+* >0 if skb should be passed on to UDP
+* <0 if skb should be resubmitted as proto -N
+*/
+int lisp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
+{
+	/* TODO: decapsulation goes here */
+	PRINTK("received %d bytes\n", skb->len);
+	kfree_skb(skb);
+	return 0;
+}
+
+void lisp_destruct(struct sock *sk)
+{
+
+	(udp_sk(sk))->encap_type = 0;
+	(udp_sk(sk))->encap_rcv = NULL;
+
+	inet_sock_destruct(sk);
+}
+
 struct lisp_sock {
 	struct udp_sock sk;
 };
@@ -196,7 +224,9 @@ static int lisp_create(struct net *net, struct socket *sock,
 	lock_sock(sk);
 
 	sk->sk_protocol	   = protocol;
-	sk->sk_destruct	   = inet_sock_destruct;
+	sk->sk_destruct	   = lisp_destruct;
+	udp_sk(sk)->encap_type = LISP_ENCAPTYPE_UDP;
+	udp_sk(sk)->encap_rcv = lisp_udp_encap_recv;
 
 	release_sock(sk);
 
