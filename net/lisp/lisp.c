@@ -25,6 +25,9 @@
 #include <net/ip.h>
 #include <net/tcp_states.h>
 #include <net/inet_hashtables.h>
+#include <linux/lisp.h>
+#include <net/dst.h>
+#include <net/xfrm.h>
 
 #define PRINTK(_fmt, args...) printk(KERN_INFO "lisp: " _fmt, ##args)
 
@@ -173,8 +176,31 @@ out:
 */
 int lisp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 {
-	/* TODO: decapsulation goes here */
-	PRINTK("received %d bytes\n", skb->len);
+	struct lisp_tunnel *tunnel;
+	struct iphdr *iph = ip_hdr(skb);
+
+	pr_debug("received %d bytes\n", skb->len);
+
+	rcu_read_lock();
+
+	tunnel = lisp_tunnel_lookup(dev_net(skb->dev), iph->daddr);
+	if (!tunnel)
+	  goto drop;
+
+	secpath_reset(skb);
+	skb_pull(skb, sizeof(struct lisphdr));
+	skb_reset_network_header(skb);
+	skb->protocol = htons(ETH_P_IP);
+	skb->pkt_type = PACKET_HOST;
+
+	skb_tunnel_rx(skb, tunnel->dev);
+
+	netif_rx(skb);
+	rcu_read_unlock();
+	return 0;
+
+drop:
+	rcu_read_unlock();
 	kfree_skb(skb);
 	return 0;
 }
