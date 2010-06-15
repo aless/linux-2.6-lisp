@@ -31,9 +31,28 @@
 #define LISP_ENCAPTYPE_UDP 1
 
 static int lisp_net_id __read_mostly;
-struct lisp_net {
-	struct net_device *lisp_dev;
+struct lisp_tunnel {
+	struct list_tunnel	*next;
+	struct net_device	*dev;
 };
+struct lisp_net {
+	struct lisp_tunnel *tunnels;
+	struct net_device *fb_tunnel_dev;	/* Fallback tunnel */
+};
+
+static struct lisp_tunnel * lisp_tunnel_lookup(struct net *net, __be32 local)
+{
+	/*TODO: real lookup*/
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct net_device *dev;
+
+	dev = lin->fb_tunnel_dev;
+	if (dev->flags & IFF_UP)
+		return netdev_priv(dev);
+
+	return NULL;
+}
+
 
 /*****************************************************************************
  * LISP socket
@@ -266,6 +285,9 @@ static const struct net_device_ops lisp_netdev_ops = {
 
 static void lisp_dev_setup(struct net_device *dev)
 {
+	struct lisp_tunnel *tunnel = netdev_priv(dev);
+	tunnel->dev = dev;
+
 	dev->netdev_ops		= &lisp_netdev_ops;
 	dev->destructor		= free_netdev;
 	dev->type		= ARPHRD_ETHER;
@@ -283,22 +305,22 @@ static int __net_init lisp_init_net(struct net *net)
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	int err;
 
-	lin->lisp_dev = alloc_netdev(sizeof(struct lisp_net), "lisp0",
+	lin->fb_tunnel_dev = alloc_netdev(sizeof(struct lisp_tunnel), "lisp0",
 					   lisp_dev_setup);
-	if (!lin->lisp_dev) {
+	if (!lin->fb_tunnel_dev) {
 		err = -ENOMEM;
 		goto err_alloc_dev;
 	}
-	dev_net_set(lin->lisp_dev, net);
+	dev_net_set(lin->fb_tunnel_dev, net);
 
-	err = register_netdev(lin->lisp_dev);
+	err = register_netdev(lin->fb_tunnel_dev);
 	if (err)
 		goto err_reg_dev;
 
 	return 0;
 
 err_reg_dev:
-	free_netdev(lin->lisp_dev);
+	free_netdev(lin->fb_tunnel_dev);
 err_alloc_dev:
 	return err;
 }
@@ -307,7 +329,8 @@ static void __net_exit lisp_exit_net(struct net *net)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 
-	unregister_netdev(lin->lisp_dev);
+	/* TODO: unregister all tunnels */
+	unregister_netdev(lin->fb_tunnel_dev);
 }
 
 static struct pernet_operations lisp_net_ops = {
