@@ -188,7 +188,7 @@ int lisp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	  goto drop;
 
 	secpath_reset(skb);
-	skb_pull(skb, sizeof(struct lisphdr));
+	skb_pull(skb, sizeof(struct lisphdr) + sizeof(struct udphdr));
 	skb_reset_network_header(skb);
 	skb->protocol = htons(ETH_P_IP);
 	skb->pkt_type = PACKET_HOST;
