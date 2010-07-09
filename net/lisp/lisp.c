@@ -122,6 +122,100 @@ static __be32 lisp_dst_lookup(struct net *net, __be32 dst)
 	return -1;
 }
 
+static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
+		int cmd)
+{
+	int err = 0;
+	struct ip_tunnel_parm parms;
+	struct lisp_tunnel *lt;
+	struct net *net = dev_net(dev);
+	char name[IFNAMSIZ];
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+
+	switch (cmd) {
+	case SIOCGETTUNNEL:
+		lt = NULL;
+		if (dev == lin->fb_tunnel_dev) {
+			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data, sizeof(parms))) {
+				err = -EFAULT;
+				break;
+			}
+			rcu_read_lock();
+			lt = lisp_tunnel_lookup(net, parms.iph.saddr);
+			rcu_read_unlock();
+		}
+		if (lt == NULL)
+			lt = netdev_priv(dev);
+		memcpy(&parms, &lt->parms, sizeof(parms));
+		if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms, sizeof(parms)))
+			err = -EFAULT;
+		break;
+
+	case SIOCADDTUNNEL:
+		err = -EPERM;
+		if (!capable(CAP_NET_ADMIN))
+			goto done;
+
+		err = -EFAULT;
+		if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data, sizeof(parms)))
+			goto done;
+
+		err = -EINVAL;
+		if (parms.iph.version != 4 || parms.iph.protocol != IPPROTO_UDP ||
+		    parms.iph.ihl != 5 || (parms.iph.frag_off&htons(~IP_DF)))
+			goto done;
+
+		rcu_read_lock();
+		lt = lisp_tunnel_lookup(net, parms.iph.saddr);
+		rcu_read_unlock();
+
+		if (lt) {
+			err = -EEXIST;
+			goto done;
+		} else {
+			if (parms.name[0])
+				strlcpy(name, parms.name, IFNAMSIZ);
+			else
+				sprintf(name, "lisp%%d");
+
+			dev = alloc_netdev(sizeof(struct lisp_tunnel), name,
+					   lisp_dev_setup);
+			dev_net_set(dev, net);
+
+			if (strchr(name, '%')) {
+				if (dev_alloc_name(dev, name) < 0)
+					goto add_err;
+			}
+			lt = netdev_priv(dev);
+			lt->dev = dev;
+			memcpy(&(lt->parms), &parms, sizeof(parms));
+
+			err = -EFAULT;
+			if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms,
+						sizeof(parms)))
+				goto add_err;
+
+			err = register_netdevice(dev);
+			if (err < 0)
+				goto add_err;
+
+			spin_lock_bh(&lisp_lock);
+			lisp_tunnel_add(net, lt);
+			spin_unlock_bh(&lisp_lock);
+		}
+		err = 0;
+		break;
+add_err:
+		free_netdev(dev);
+		goto done;
+	default:
+		err = -EINVAL;
+	}
+
+done:
+	return err;
+}
+
 /*****************************************************************************
  * LISP socket
  *****************************************************************************/
@@ -392,6 +486,7 @@ static int lisp_tunnel_init(struct net_device *dev)
 
 static const struct net_device_ops lisp_netdev_ops = {
 	.ndo_start_xmit		= lisp_dev_xmit,
+	.ndo_do_ioctl		= lisp_tunnel_ioctl,
 	.ndo_init		= lisp_tunnel_init,
 	.ndo_uninit		= lisp_tunnel_uninit,
 };
