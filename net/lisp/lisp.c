@@ -457,11 +457,141 @@ static const struct net_proto_family lisp_proto_family = {
 static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct net_device_stats *stats = &dev->stats;
+	struct lisp_tunnel *tun = netdev_priv(dev);
+	struct rtable *rt;
+	struct net_device *tdev;
+	struct netdev_queue *txq = netdev_get_tx_queue(dev, 0);
+	struct net *net = dev_net(dev);
+	struct iphdr *tiph = &tun->parms.iph;
+	struct iphdr *old_iph = ip_hdr(skb);
+	struct iphdr *iph;
+	struct udphdr *uh;
+	struct lisphdr *lh;
+	__be32 dst;
+	int lisp_hlen =  sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct lisphdr);
+	unsigned int max_headroom;
+	int data_len = skb->len;
+	int udp_len;
+	__wsum csum;
 
-	goto tx_error;
+	rcu_read_lock();
+	dst = lisp_dst_lookup(net, old_iph->daddr);
+	rcu_read_unlock();
+	if (dst == -1)
+		/* TODO: send a Map-Request (and packet cache?) */
+		goto tx_drop;
+
+	{
+		struct flowi fl = { .oif = 0,
+				    .nl_u = { .ip4_u =
+					      { .daddr = dst,
+						.saddr = tiph->saddr} },
+				    .proto = IPPROTO_UDP };
+		if (ip_route_output_key(dev_net(dev), &rt, &fl)) {
+			stats->tx_carrier_errors++;
+			goto tx_error_icmp;
+		}
+	}
+
+	tdev = rt->u.dst.dev;
+
+	if (tdev == dev) {
+		ip_rt_put(rt);
+		stats->collisions++;
+		goto tx_error;
+	}
+
+	max_headroom = LL_RESERVED_SPACE(tdev) + lisp_hlen;
+
+	if (skb_headroom(skb) < max_headroom || skb_shared(skb)||
+	    (skb_cloned(skb) && !skb_clone_writable(skb, 0))) {
+		struct sk_buff *new_skb = skb_realloc_headroom(skb, max_headroom);
+		if (max_headroom > dev->needed_headroom)
+			dev->needed_headroom = max_headroom;
+		if (!new_skb) {
+			ip_rt_put(rt);
+			txq->tx_dropped++;
+			dev_kfree_skb(skb);
+			return NETDEV_TX_OK;
+		}
+		if (skb->sk)
+			skb_set_owner_w(new_skb, skb->sk);
+		dev_kfree_skb(skb);
+		skb = new_skb;
+		old_iph = ip_hdr(skb);
+	}
+
+	/* LISP header */
+	skb_push(skb, sizeof(struct lisphdr));
+	skb_reset_transport_header(skb);
+	lh = lisp_hdr(skb);
+	/* TODO: fill LISP header */
+
+	/* UDP header */
+	skb_push(skb, sizeof(struct udphdr));
+	skb_reset_transport_header(skb);
+
+	uh		= 	udp_hdr(skb);
+	uh->source	=	htons(LISP_DATA_PORT);
+	uh->dest	= 	htons(LISP_DATA_PORT);
+	udp_len 	=	lisp_hlen + data_len - sizeof(struct iphdr);
+	uh->len 	= 	htons(udp_len);
+	uh->check	=	0;
+
+	/* IP header */
+	skb_push(skb, sizeof(struct iphdr));
+	skb_reset_network_header(skb);
+
+	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
+	IPCB(skb)->flags &= ~(IPSKB_XFRM_TUNNEL_SIZE | IPSKB_XFRM_TRANSFORMED |
+			      IPSKB_REROUTED);
+
+	skb_dst_drop(skb);
+	skb_dst_set(skb, &rt->u.dst);
+
+	/* TODO: set frag_off, tos */
+	iph		=	ip_hdr(skb);
+	iph->version	=	4;
+	iph->ihl	=	sizeof(struct iphdr) >> 2;
+	iph->protocol	=	IPPROTO_UDP;
+	iph->daddr	=	rt->rt_dst;
+	iph->saddr	=	rt->rt_src;
+
+	if ((iph->ttl = tiph->ttl) == 0)
+		iph->ttl =	old_iph->ttl;
+
+	nf_reset(skb);
+
+
+	/*TODO: make udp checksum calculation optional */
+	if ((skb_dst(skb) && skb_dst(skb)->dev) &&
+		 (!(skb_dst(skb)->dev->features & NETIF_F_V4_CSUM))) {
+		skb->ip_summed = CHECKSUM_COMPLETE;
+		csum = skb_checksum(skb, 0, udp_len, 0);
+		uh->check = csum_tcpudp_magic(iph->saddr,
+					      iph->daddr,
+					      udp_len, IPPROTO_UDP, csum);
+		if (uh->check == 0)
+			uh->check = CSUM_MANGLED_0;
+	} else {
+		skb->ip_summed = CHECKSUM_PARTIAL;
+		skb->csum_start = skb_transport_header(skb) - skb->head;
+		skb->csum_offset = offsetof(struct udphdr, check);
+		uh->check = ~csum_tcpudp_magic(iph->saddr,
+					       iph->daddr,
+					       udp_len, IPPROTO_UDP, 0);
+	}
+
+	IPTUNNEL_XMIT();
+	return NETDEV_TX_OK;
+
+tx_error_icmp:
+	dst_link_failure(skb);
 
 tx_error:
 	stats->tx_errors++;
+
+tx_drop:
 	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
