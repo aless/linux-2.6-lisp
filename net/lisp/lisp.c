@@ -45,7 +45,7 @@ struct rloc_entry {
 	struct list_head	list;
 	__be32			rloc;
 	int			priority;
-	int 			weigth;
+	int			weigth;
 	char			rloc_flags;
 };
 
@@ -53,20 +53,20 @@ struct map_entry {
 	struct list_head	list;
 	__be32			eid;
 	struct list_head	rlocs;
-	int 			rloc_cnt;
+	int			rloc_cnt;
 	char			map_flags;
 };
 
 struct lisp_tunnel {
 	struct list_head	list;
 	struct net_device	*dev;
-	struct ip_tunnel_parm 	parms;
+	struct ip_tunnel_parm	parms;
 };
 
 struct lisp_net {
-	struct list_head tunnels[HASH_SIZE];
-	struct list_head maps;
-	struct net_device *fb_tunnel_dev;	/* Fallback tunnel */
+	struct list_head	tunnels[HASH_SIZE];
+	struct list_head	maps;
+	struct net_device	*fb_tunnel_dev;	/* Fallback tunnel */
 };
 
 static int lisp_net_id __read_mostly;
@@ -78,18 +78,18 @@ static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct net_device *dev;
-	struct lisp_tunnel *t;
+	struct lisp_tunnel *tun;
 	unsigned h = HASH(remote);
 
-	list_for_each_entry_rcu(t, &(lin->tunnels[h]),  list) {
-		if (t->parms.iph.saddr == remote)
-			return t;
+	list_for_each_entry_rcu(tun, &(lin->tunnels[h]),  list) {
+		if (tun->parms.iph.saddr == remote)
+			return tun;
 	};
 
 	dev = lin->fb_tunnel_dev;
-	t = (struct lisp_tunnel *)netdev_priv(dev);
-	if (t->parms.iph.saddr == remote)
-		return t;
+	tun = (struct lisp_tunnel *)netdev_priv(dev);
+	if (tun->parms.iph.saddr == remote)
+		return tun;
 
 	return NULL;
 }
@@ -114,8 +114,9 @@ static __be32 lisp_dst_lookup(struct net *net, __be32 dst)
 	struct rloc_entry *ret;
 
 	list_for_each_entry_rcu(map, &(lin->maps),  list) {
-		if (map->eid == dst && map->rloc_cnt > 0){
-			ret = list_first_entry_rcu(&map->rlocs, struct rloc_entry, list);
+		if (map->eid == dst && map->rloc_cnt > 0) {
+			ret = list_first_entry_rcu(&map->rlocs,
+						   struct rloc_entry, list);
 			return ret->rloc;
 		}
 	};
@@ -127,26 +128,27 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 {
 	int err = 0;
 	struct ip_tunnel_parm parms;
-	struct lisp_tunnel *lt;
+	struct lisp_tunnel *tun;
 	struct net *net = dev_net(dev);
 	char name[IFNAMSIZ];
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 
 	switch (cmd) {
 	case SIOCGETTUNNEL:
-		lt = NULL;
+		tun = NULL;
 		if (dev == lin->fb_tunnel_dev) {
-			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data, sizeof(parms))) {
+			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data,
+					   sizeof(parms))) {
 				err = -EFAULT;
 				break;
 			}
 			rcu_read_lock();
-			lt = lisp_tunnel_lookup(net, parms.iph.saddr);
+			tun = lisp_tunnel_lookup(net, parms.iph.saddr);
 			rcu_read_unlock();
 		}
-		if (lt == NULL)
-			lt = netdev_priv(dev);
-		memcpy(&parms, &lt->parms, sizeof(parms));
+		if (tun == NULL)
+			tun = netdev_priv(dev);
+		memcpy(&parms, &tun->parms, sizeof(parms));
 		if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms, sizeof(parms)))
 			err = -EFAULT;
 		break;
@@ -166,10 +168,10 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 			goto done;
 
 		rcu_read_lock();
-		lt = lisp_tunnel_lookup(net, parms.iph.saddr);
+		tun = lisp_tunnel_lookup(net, parms.iph.saddr);
 		rcu_read_unlock();
 
-		if (lt) {
+		if (tun) {
 			err = -EEXIST;
 			goto done;
 		} else {
@@ -186,9 +188,9 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 				if (dev_alloc_name(dev, name) < 0)
 					goto add_err;
 			}
-			lt = netdev_priv(dev);
-			lt->dev = dev;
-			memcpy(&(lt->parms), &parms, sizeof(parms));
+			tun = netdev_priv(dev);
+			tun->dev = dev;
+			memcpy(&(tun->parms), &parms, sizeof(parms));
 
 			err = -EFAULT;
 			if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms,
@@ -200,7 +202,7 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 				goto add_err;
 
 			spin_lock_bh(&lisp_lock);
-			lisp_tunnel_add(net, lt);
+			lisp_tunnel_add(net, tun);
 			spin_unlock_bh(&lisp_lock);
 		}
 		err = 0;
@@ -333,18 +335,18 @@ out:
 * >0 if skb should be passed on to UDP
 * <0 if skb should be resubmitted as proto -N
 */
-int lisp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
+int lisp_udp_encap_rcv(struct sock *sk, struct sk_buff *skb)
 {
-	struct lisp_tunnel *tunnel;
+	struct lisp_tunnel *tun;
 	struct iphdr *iph = ip_hdr(skb);
 
 	pr_debug("received %d bytes\n", skb->len);
 
 	rcu_read_lock();
 
-	tunnel = lisp_tunnel_lookup(dev_net(skb->dev), iph->saddr);
-	if (tunnel == NULL)
-	  goto drop;
+	tun = lisp_tunnel_lookup(dev_net(skb->dev), iph->saddr);
+	if (tun == NULL)
+		goto drop;
 
 	/*TODO: local map lookup*/
 
@@ -354,7 +356,7 @@ int lisp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	skb->protocol = htons(ETH_P_IP);
 	skb->pkt_type = PACKET_HOST;
 
-	skb_tunnel_rx(skb, tunnel->dev);
+	skb_tunnel_rx(skb, tun->dev);
 
 	netif_rx(skb);
 	rcu_read_unlock();
@@ -368,7 +370,6 @@ drop:
 
 void lisp_destruct(struct sock *sk)
 {
-
 	(udp_sk(sk))->encap_type = 0;
 	(udp_sk(sk))->encap_rcv = NULL;
 
@@ -429,10 +430,10 @@ static int lisp_create(struct net *net, struct socket *sock,
 
 	lock_sock(sk);
 
-	sk->sk_protocol	   = protocol;
-	sk->sk_destruct	   = lisp_destruct;
+	sk->sk_protocol = protocol;
+	sk->sk_destruct = lisp_destruct;
 	udp_sk(sk)->encap_type = LISP_ENCAPTYPE_UDP;
-	udp_sk(sk)->encap_rcv = lisp_udp_encap_recv;
+	udp_sk(sk)->encap_rcv = lisp_udp_encap_rcv;
 
 	release_sock(sk);
 
@@ -454,7 +455,7 @@ static const struct net_proto_family lisp_proto_family = {
  * LISP net device
  *****************************************************************************/
 
-static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct net_device_stats *stats = &dev->stats;
 	struct lisp_tunnel *tun = netdev_priv(dev);
@@ -468,11 +469,12 @@ static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct udphdr *uh;
 	struct lisphdr *lh;
 	__be32 dst;
-	int lisp_hlen =  sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(struct lisphdr);
 	unsigned int max_headroom;
 	int data_len = skb->len;
 	int udp_len;
 	__wsum csum;
+	int lisp_hlen = sizeof(struct iphdr) + sizeof(struct udphdr) +
+		sizeof(struct lisphdr);
 
 	rcu_read_lock();
 	dst = lisp_dst_lookup(net, old_iph->daddr);
@@ -503,7 +505,7 @@ static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	max_headroom = LL_RESERVED_SPACE(tdev) + lisp_hlen;
 
-	if (skb_headroom(skb) < max_headroom || skb_shared(skb)||
+	if (skb_headroom(skb) < max_headroom || skb_shared(skb) ||
 	    (skb_cloned(skb) && !skb_clone_writable(skb, 0))) {
 		struct sk_buff *new_skb = skb_realloc_headroom(skb, max_headroom);
 		if (max_headroom > dev->needed_headroom)
@@ -531,11 +533,11 @@ static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb_push(skb, sizeof(struct udphdr));
 	skb_reset_transport_header(skb);
 
-	uh		= 	udp_hdr(skb);
+	uh		=	udp_hdr(skb);
 	uh->source	=	htons(LISP_DATA_PORT);
-	uh->dest	= 	htons(LISP_DATA_PORT);
-	udp_len 	=	lisp_hlen + data_len - sizeof(struct iphdr);
-	uh->len 	= 	htons(udp_len);
+	uh->dest	=	htons(LISP_DATA_PORT);
+	udp_len		=	lisp_hlen + data_len - sizeof(struct iphdr);
+	uh->len		=	htons(udp_len);
 	uh->check	=	0;
 
 	/* IP header */
@@ -556,8 +558,9 @@ static netdev_tx_t lisp_dev_xmit(struct sk_buff *skb, struct net_device *dev)
 	iph->protocol	=	IPPROTO_UDP;
 	iph->daddr	=	rt->rt_dst;
 	iph->saddr	=	rt->rt_src;
+	iph->ttl	=	tiph->ttl;
 
-	if ((iph->ttl = tiph->ttl) == 0)
+	if (iph->ttl == 0)
 		iph->ttl =	old_iph->ttl;
 
 	nf_reset(skb);
@@ -604,18 +607,18 @@ static void lisp_tunnel_uninit(struct net_device *dev)
 /* called by register_netdev */
 static int lisp_tunnel_init(struct net_device *dev)
 {
-	struct lisp_tunnel *tunnel = netdev_priv(dev);
+	struct lisp_tunnel *tun = netdev_priv(dev);
 
-	tunnel->dev = dev;
-	strcpy(tunnel->parms.name, dev->name);
-	memcpy(dev->dev_addr, &tunnel->parms.iph.saddr, 4);
+	tun->dev = dev;
+	strcpy(tun->parms.name, dev->name);
+	memcpy(dev->dev_addr, &tun->parms.iph.saddr, 4);
 	dev_hold(dev);
 
 	return 0;
 }
 
 static const struct net_device_ops lisp_netdev_ops = {
-	.ndo_start_xmit		= lisp_dev_xmit,
+	.ndo_start_xmit		= lisp_tunnel_xmit,
 	.ndo_do_ioctl		= lisp_tunnel_ioctl,
 	.ndo_init		= lisp_tunnel_init,
 	.ndo_uninit		= lisp_tunnel_uninit,
@@ -652,6 +655,7 @@ static int __net_init lisp_init_net(struct net *net)
 		err = -ENOMEM;
 		goto err_alloc_dev;
 	}
+
 	dev_net_set(lin->fb_tunnel_dev, net);
 
 	err = register_netdev(lin->fb_tunnel_dev);
@@ -669,11 +673,11 @@ err_alloc_dev:
 static void lisp_destroy_tunnels(struct lisp_net *lin, struct list_head *list)
 {
 	int i;
-	struct lisp_tunnel *t;
+	struct lisp_tunnel *tun;
 
 	for (i = 0; i < HASH_SIZE; ++i) {
-		list_for_each_entry_rcu(t, &(lin->tunnels[i]),  list) {
-			unregister_netdevice_queue(t->dev, list);
+		list_for_each_entry_rcu(tun, &(lin->tunnels[i]),  list) {
+			unregister_netdevice_queue(tun->dev, list);
 		};
 	};
 
@@ -692,10 +696,10 @@ static void __net_exit lisp_exit_net(struct net *net)
 }
 
 static struct pernet_operations lisp_net_ops = {
-	.init = lisp_init_net,
-	.exit = lisp_exit_net,
-	.id   = &lisp_net_id,
-	.size = sizeof(struct lisp_net),
+	.init	=	lisp_init_net,
+	.exit	=	lisp_exit_net,
+	.id	=	&lisp_net_id,
+	.size	=	sizeof(struct lisp_net),
 };
 
 /*****************************************************************************
@@ -734,3 +738,5 @@ static void __exit lisp_exit(void)
 module_init(lisp_init);
 module_exit(lisp_exit);
 MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Alex Lorca <alex.lorca@gmail.com>");
+MODULE_DESCRIPTION("LISP driver");
