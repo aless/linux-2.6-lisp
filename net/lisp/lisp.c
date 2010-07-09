@@ -28,34 +28,99 @@
 #include <linux/lisp.h>
 #include <net/dst.h>
 #include <net/xfrm.h>
+#include <linux/list.h>
+#include <linux/rculist.h>
+#include <linux/if_tunnel.h>
+#include <net/ipip.h>
 
 #define PRINTK(_fmt, args...) printk(KERN_INFO "lisp: " _fmt, ##args)
 
 #define LISP_ENCAPTYPE_UDP 1
+#define HASH_SIZE        16
+#define HASH(addr) (((__force u32)addr^((__force u32)addr>>4))&0xF)
 
-static int lisp_net_id __read_mostly;
-struct lisp_tunnel {
-	struct list_tunnel	*next;
-	struct net_device	*dev;
+static DEFINE_SPINLOCK(lisp_lock);
+
+struct rloc_entry {
+	struct list_head	list;
+	__be32			rloc;
+	int			priority;
+	int 			weigth;
+	char			rloc_flags;
 };
+
+struct map_entry {
+	struct list_head	list;
+	__be32			eid;
+	struct list_head	rlocs;
+	int 			rloc_cnt;
+	char			map_flags;
+};
+
+struct lisp_tunnel {
+	struct list_head	list;
+	struct net_device	*dev;
+	struct ip_tunnel_parm 	parms;
+};
+
 struct lisp_net {
-	struct lisp_tunnel *tunnels;
+	struct list_head tunnels[HASH_SIZE];
+	struct list_head maps;
 	struct net_device *fb_tunnel_dev;	/* Fallback tunnel */
 };
 
-static struct lisp_tunnel * lisp_tunnel_lookup(struct net *net, __be32 local)
+static int lisp_net_id __read_mostly;
+
+static void lisp_dev_setup(struct net_device *dev);
+
+/* TODO: this lookup and the map structure need optimization*/
+static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 {
-	/*TODO: real lookup*/
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct net_device *dev;
+	struct lisp_tunnel *t;
+	unsigned h = HASH(remote);
+
+	list_for_each_entry_rcu(t, &(lin->tunnels[h]),  list) {
+		if (t->parms.iph.saddr == remote)
+			return t;
+	};
 
 	dev = lin->fb_tunnel_dev;
-	if (dev->flags & IFF_UP)
-		return netdev_priv(dev);
+	t = (struct lisp_tunnel *)netdev_priv(dev);
+	if (t->parms.iph.saddr == remote)
+		return t;
 
 	return NULL;
 }
 
+static void lisp_tunnel_add(struct net *net, struct lisp_tunnel *tun)
+{
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	unsigned h = HASH(tun->parms.iph.saddr);
+
+	list_add_tail_rcu(&tun->list, &lin->tunnels[h]);
+}
+
+static void lisp_tunnel_del(struct lisp_tunnel *tun)
+{
+	list_del_rcu(&tun->list);
+}
+
+static __be32 lisp_dst_lookup(struct net *net, __be32 dst)
+{
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct map_entry *map;
+	struct rloc_entry *ret;
+
+	list_for_each_entry_rcu(map, &(lin->maps),  list) {
+		if (map->eid == dst && map->rloc_cnt > 0){
+			ret = list_first_entry_rcu(&map->rlocs, struct rloc_entry, list);
+			return ret->rloc;
+		}
+	};
+	return -1;
+}
 
 /*****************************************************************************
  * LISP socket
@@ -183,9 +248,11 @@ int lisp_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 
 	rcu_read_lock();
 
-	tunnel = lisp_tunnel_lookup(dev_net(skb->dev), iph->daddr);
-	if (!tunnel)
+	tunnel = lisp_tunnel_lookup(dev_net(skb->dev), iph->saddr);
+	if (tunnel == NULL)
 	  goto drop;
+
+	/*TODO: local map lookup*/
 
 	secpath_reset(skb);
 	skb_pull(skb, sizeof(struct lisphdr) + sizeof(struct udphdr));
@@ -329,7 +396,12 @@ static void lisp_dev_setup(struct net_device *dev)
 static int __net_init lisp_init_net(struct net *net)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
-	int err;
+	int err, i;
+
+	for (i = 0; i < HASH_SIZE; ++i)
+		INIT_LIST_HEAD(&lin->tunnels[i]);
+
+	INIT_LIST_HEAD(&lin->maps);
 
 	lin->fb_tunnel_dev = alloc_netdev(sizeof(struct lisp_tunnel), "lisp0",
 					   lisp_dev_setup);
@@ -351,12 +423,29 @@ err_alloc_dev:
 	return err;
 }
 
+static void lisp_destroy_tunnels(struct lisp_net *lin, struct list_head *list)
+{
+	int i;
+	struct lisp_tunnel *t;
+
+	for (i = 0; i < HASH_SIZE; ++i) {
+		list_for_each_entry_rcu(t, &(lin->tunnels[i]),  list) {
+			unregister_netdevice_queue(t->dev, list);
+		};
+	};
+
+}
+
 static void __net_exit lisp_exit_net(struct net *net)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	LIST_HEAD(list);
 
-	/* TODO: unregister all tunnels */
-	unregister_netdev(lin->fb_tunnel_dev);
+	rtnl_lock();
+	lisp_destroy_tunnels(lin, &list);
+	unregister_netdevice_queue(lin->fb_tunnel_dev, &list);
+	unregister_netdevice_many(&list);
+	rtnl_unlock();
 }
 
 static struct pernet_operations lisp_net_ops = {
