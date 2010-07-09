@@ -372,21 +372,39 @@ tx_error:
 	return NETDEV_TX_OK;
 }
 
+static void lisp_tunnel_uninit(struct net_device *dev)
+{
+	dev_put(dev);
+}
+
+/* called by register_netdev */
+static int lisp_tunnel_init(struct net_device *dev)
+{
+	struct lisp_tunnel *tunnel = netdev_priv(dev);
+
+	tunnel->dev = dev;
+	strcpy(tunnel->parms.name, dev->name);
+	memcpy(dev->dev_addr, &tunnel->parms.iph.saddr, 4);
+	dev_hold(dev);
+
+	return 0;
+}
+
 static const struct net_device_ops lisp_netdev_ops = {
 	.ndo_start_xmit		= lisp_dev_xmit,
+	.ndo_init		= lisp_tunnel_init,
+	.ndo_uninit		= lisp_tunnel_uninit,
 };
 
 static void lisp_dev_setup(struct net_device *dev)
 {
-	struct lisp_tunnel *tunnel = netdev_priv(dev);
-	tunnel->dev = dev;
-
 	dev->netdev_ops		= &lisp_netdev_ops;
 	dev->destructor		= free_netdev;
-	dev->type		= ARPHRD_ETHER;
+	dev->type		= ARPHRD_LISP;
 	dev->flags		= IFF_NOARP;
-
-	random_ether_addr(dev->dev_addr);
+	dev->mtu		= ETH_DATA_LEN - sizeof(struct iphdr);
+	dev->addr_len		= 4;
+	dev->features		|= NETIF_F_NETNS_LOCAL;
 }
 
 /*****************************************************************************
