@@ -207,15 +207,43 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		}
 		err = 0;
 		break;
-add_err:
-		free_netdev(dev);
-		goto done;
+
+	case SIOCDELTUNNEL:
+		err = -EPERM;
+		if (!capable(CAP_NET_ADMIN))
+			goto done;
+
+		if (dev == lin->fb_tunnel_dev) {
+			err = -EFAULT;
+			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data, sizeof(parms)))
+				goto done;
+			err = -ENOENT;
+			tun = lisp_tunnel_lookup(net, parms.iph.saddr);
+			if (tun == NULL)
+				goto done;
+			err = -EPERM;
+			if (tun->dev == lin->fb_tunnel_dev)
+				goto done;
+		} else
+			tun = netdev_priv(dev);
+
+		spin_lock_bh(&lisp_lock);
+		lisp_tunnel_del(tun);
+		spin_unlock_bh(&lisp_lock);
+
+		unregister_netdevice(dev);
+		err = 0;
+		break;
+
 	default:
 		err = -EINVAL;
 	}
 
 done:
 	return err;
+add_err:
+	free_netdev(dev);
+	goto done;
 }
 
 /*****************************************************************************
