@@ -45,7 +45,7 @@ static DEFINE_SPINLOCK(lisp_lock);
 
 struct rloc_entry {
 	struct list_head	list;
-        struct rcu_head		rcu;
+	struct rcu_head		rcu;
 	__be32			rloc;
 	int			priority;
 	int			weight;
@@ -54,7 +54,7 @@ struct rloc_entry {
 
 struct map_entry {
 	struct list_head	list;
-        struct rcu_head		rcu;
+	struct rcu_head		rcu;
 	__be32			eid;
 	__be32			mask;
 	struct list_head	rlocs;
@@ -152,7 +152,8 @@ static void lisp_map_del(struct map_entry *map)
 	call_rcu(&map->rcu, lisp_map_free);
 }
 
-static int lisp_map_add(struct net *net, __be32 eid, __be32 mask, __be32 rloc, int prio, int weight)
+static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
+			__be32 rloc, int prio, int weight)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_entry *map;
@@ -166,7 +167,7 @@ static int lisp_map_add(struct net *net, __be32 eid, __be32 mask, __be32 rloc, i
 		goto out;
 
 	INIT_LIST_HEAD(&map->rlocs);
-        INIT_RCU_HEAD(&map->rcu);
+	INIT_RCU_HEAD(&map->rcu);
 	map->eid = eid;
 	map->mask = mask;
 
@@ -176,7 +177,7 @@ static int lisp_map_add(struct net *net, __be32 eid, __be32 mask, __be32 rloc, i
 
 	err = 0;
 
-        INIT_RCU_HEAD(&rloc_ent->rcu);
+	INIT_RCU_HEAD(&rloc_ent->rcu);
 	rloc_ent->rloc = rloc;
 	rloc_ent->priority = prio;
 	rloc_ent->weight = weight;
@@ -223,7 +224,8 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		if (tun == NULL)
 			tun = netdev_priv(dev);
 		memcpy(&parms, &tun->parms, sizeof(parms));
-		if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms, sizeof(parms)))
+		if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms,
+				 sizeof(parms)))
 			err = -EFAULT;
 		break;
 
@@ -233,7 +235,8 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 			goto done;
 
 		err = -EFAULT;
-		if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data, sizeof(parms)))
+		if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data,
+				   sizeof(parms)))
 			goto done;
 
 		err = -EINVAL;
@@ -289,7 +292,8 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 
 		if (dev == lin->fb_tunnel_dev) {
 			err = -EFAULT;
-			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data, sizeof(parms)))
+			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data,
+					   sizeof(parms)))
 				goto done;
 			err = -ENOENT;
 			tun = lisp_tunnel_lookup(net, parms.iph.saddr);
@@ -815,7 +819,7 @@ static void lisp_destroy_maps(struct lisp_net *lin)
 	list_for_each_entry_safe(map, mtmp, &lin->maps, list) {
 		int cnt = atomic_read(&map->rloc_cnt);
 
-		if (cnt > 0){
+		if (cnt > 0) {
 			list_for_each_entry_safe(rloc, rtmp, &map->rlocs, list)
 				lisp_rloc_del(rloc);
 		}
