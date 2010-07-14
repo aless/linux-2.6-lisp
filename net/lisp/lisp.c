@@ -43,6 +43,7 @@ static DEFINE_SPINLOCK(lisp_lock);
 
 struct rloc_entry {
 	struct list_head	list;
+        struct rcu_head		rcu;
 	__be32			rloc;
 	int			priority;
 	int			weight;
@@ -51,9 +52,11 @@ struct rloc_entry {
 
 struct map_entry {
 	struct list_head	list;
+        struct rcu_head		rcu;
 	__be32			eid;
+	__be32			mask;
 	struct list_head	rlocs;
-	int			rloc_cnt;
+	atomic_t		rloc_cnt;
 	char			map_flags;
 };
 
@@ -114,13 +117,82 @@ static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
 	struct rloc_entry *ret;
 
 	list_for_each_entry_rcu(map, &(lin->maps),  list) {
-		if (map->eid == dst && map->rloc_cnt > 0) {
+		if (map->eid == eid && atomic_read(&map->rloc_cnt) > 0) {
 			ret = list_first_entry_rcu(&map->rlocs,
 						   struct rloc_entry, list);
 			return ret->rloc;
 		}
 	};
 	return -1;
+}
+
+void lisp_rloc_free(struct rcu_head *head)
+{
+	struct rloc_entry *rloc = container_of(head, struct rloc_entry, rcu);
+	kfree(rloc);
+}
+
+static void lisp_rloc_del(struct rloc_entry *rloc)
+{
+	list_del_rcu(&rloc->list);
+	call_rcu(&rloc->rcu, lisp_rloc_free);
+}
+
+void lisp_map_free(struct rcu_head *head)
+{
+	struct map_entry *map = container_of(head, struct map_entry, rcu);
+	kfree(map);
+}
+
+static void lisp_map_del(struct map_entry *map)
+{
+	list_del_rcu(&map->list);
+	call_rcu(&map->rcu, lisp_map_free);
+}
+
+static int lisp_map_add(struct net *net, __be32 eid, __be32 mask, __be32 rloc, int prio, int weight)
+{
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct map_entry *map;
+	struct rloc_entry *rloc_ent;
+	int err = -ENOMEM;
+
+	/* TODO: search and replace/update map*/
+
+	map = kmalloc(sizeof(struct map_entry), GFP_KERNEL);
+	if (!map)
+		goto out;
+
+	INIT_LIST_HEAD(&map->rlocs);
+        INIT_RCU_HEAD(&map->rcu);
+	map->eid = eid;
+	map->mask = mask;
+
+	rloc_ent = kmalloc(sizeof(struct rloc_entry), GFP_KERNEL);
+	if (!rloc_ent)
+		goto out_release_map;
+
+	err = 0;
+
+        INIT_RCU_HEAD(&rloc_ent->rcu);
+	rloc_ent->rloc = rloc;
+	rloc_ent->priority = prio;
+	rloc_ent->weight = weight;
+
+	list_add(&rloc_ent->list, &map->rlocs);
+
+	spin_lock_bh(&lisp_lock);
+	list_add_rcu(&map->list, &lin->maps);
+	spin_unlock_bh(&lisp_lock);
+
+	atomic_set(&map->rloc_cnt, 1);
+
+	return err;
+
+out_release_map:
+	kfree(map);
+out:
+	return err;
 }
 
 static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
@@ -698,6 +770,22 @@ err_alloc_dev:
 	return err;
 }
 
+static void lisp_destroy_maps(struct lisp_net *lin)
+{
+	struct map_entry *map, *mtmp;
+	struct rloc_entry *rloc, *rtmp;
+
+	list_for_each_entry_safe(map, mtmp, &lin->maps, list) {
+		int cnt = atomic_read(&map->rloc_cnt);
+
+		if (cnt > 0){
+			list_for_each_entry_safe(rloc, rtmp, &map->rlocs, list)
+				lisp_rloc_del(rloc);
+		}
+		lisp_map_del(map);
+	}
+}
+
 static void lisp_destroy_tunnels(struct lisp_net *lin, struct list_head *list)
 {
 	int i;
@@ -715,6 +803,10 @@ static void __net_exit lisp_exit_net(struct net *net)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	LIST_HEAD(list);
+
+	spin_lock_bh(&lisp_lock);
+	lisp_destroy_maps(lin);
+	spin_unlock_bh(&lisp_lock);
 
 	rtnl_lock();
 	lisp_destroy_tunnels(lin, &list);
