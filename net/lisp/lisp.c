@@ -32,6 +32,8 @@
 #include <linux/rculist.h>
 #include <linux/if_tunnel.h>
 #include <net/ipip.h>
+#include <net/netlink.h>
+#include <net/genetlink.h>
 
 #define PRINTK(_fmt, args...) printk(KERN_INFO "lisp: " _fmt, ##args)
 
@@ -317,6 +319,41 @@ add_err:
 	free_netdev(dev);
 	goto done;
 }
+
+/*****************************************************************************
+ * LISP netlink interface
+ *****************************************************************************/
+
+/* family definition */
+static struct genl_family lisp_gnl_family = {
+	.id = GENL_ID_GENERATE,
+	.hdrsize = 0,
+	.name = LISP_GNL_NAME,
+	.version = LISP_GNL_VERSION,
+	.maxattr = LISP_GNL_ATTR_MAX,
+};
+
+static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
+{
+	__be32 eid = htonl(nla_get_u32(info->attrs[LISP_GNL_ATTR_EID]));
+	__be32 rloc = htonl(nla_get_u32(info->attrs[LISP_GNL_ATTR_RLOC]));
+	__u8 prio = nla_get_u8(info->attrs[LISP_GNL_ATTR_PRIO]);
+	__u8 weight = nla_get_u8(info->attrs[LISP_GNL_ATTR_WEIGHT]);
+	struct net *net = genl_info_net(info);
+
+	lisp_map_add(net, eid, 0xffffffff, rloc, prio, weight);
+	/*TODO: error check*/
+
+	return 0;
+}
+
+static struct genl_ops lisp_gnl_ops_echo = {
+	.cmd = LISP_GNL_CMD_ADDMAP,
+	.flags = 0,
+	.policy = lisp_gnl_policy,
+	.doit = lisp_gnl_doit_addmap,
+	.dumpit = NULL,
+};
 
 /*****************************************************************************
  * LISP socket
@@ -840,8 +877,18 @@ static int __init lisp_init(void)
 	if (err)
 		goto out_unregister_sock;
 
+	err = genl_register_family(&lisp_gnl_family);
+	if (err)
+		goto out_unregister_sock;
+
+	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_echo);
+	if (err)
+		goto out_unregister_nl;
+
 out:
 	return err;
+out_unregister_nl:
+	genl_unregister_family(&lisp_gnl_family);
 out_unregister_sock:
 	sock_unregister(PF_LISP);
 out_unregister_pernet_dev:
@@ -851,6 +898,7 @@ out_unregister_pernet_dev:
 
 static void __exit lisp_exit(void)
 {
+	genl_unregister_family(&lisp_gnl_family);
 	unregister_pernet_device(&lisp_net_ops);
 	sock_unregister(PF_LISP);
 }

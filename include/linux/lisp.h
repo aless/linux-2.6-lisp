@@ -73,6 +73,39 @@ struct lisphdr {
 	};
 };
 
+/* Netlink definitions */
+
+#define LISP_GNL_NAME "LISP"
+#define LISP_GNL_VERSION 1
+
+/* Attributes */
+enum {
+	LISP_GNL_ATTR_UNSPEC,
+	LISP_GNL_ATTR_EID,
+	LISP_GNL_ATTR_RLOC,
+	LISP_GNL_ATTR_WEIGHT,
+	LISP_GNL_ATTR_PRIO,
+	__LISP_GNL_ATTR_MAX,
+};
+#define LISP_GNL_ATTR_MAX (__LISP_GNL_ATTR_MAX - 1)
+
+/* Attribute policy */
+static struct nla_policy lisp_gnl_policy[LISP_GNL_ATTR_MAX + 1] = {
+	[LISP_GNL_ATTR_EID]	= { .type = NLA_U32 },
+	[LISP_GNL_ATTR_RLOC]	= { .type = NLA_U32 },
+	[LISP_GNL_ATTR_WEIGHT]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_PRIO]	= { .type = NLA_U8 },
+};
+
+/* Commands */
+enum {
+	LISP_GNL_CMD_UNSPEC,
+	LISP_GNL_CMD_ADDMAP,
+	__LISP_GNL_CMD_MAX,
+};
+#define LISP_GNL_CMD_MAX (__LISP_GNL_CMD_MAX - 1)
+
+
 #ifdef __KERNEL__
 #include <linux/skbuff.h>
 #include <net/udp.h>
