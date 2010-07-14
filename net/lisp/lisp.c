@@ -45,7 +45,7 @@ struct rloc_entry {
 	struct list_head	list;
 	__be32			rloc;
 	int			priority;
-	int			weigth;
+	int			weight;
 	char			rloc_flags;
 };
 
@@ -73,7 +73,6 @@ static int lisp_net_id __read_mostly;
 
 static void lisp_dev_setup(struct net_device *dev);
 
-/* TODO: this lookup and the map structure need optimization*/
 static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
@@ -107,7 +106,8 @@ static void lisp_tunnel_del(struct lisp_tunnel *tun)
 	list_del_rcu(&tun->list);
 }
 
-static __be32 lisp_dst_lookup(struct net *net, __be32 dst)
+/* TODO: this lookup and the map structure need optimization*/
+static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_entry *map;
@@ -505,7 +505,7 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 		sizeof(struct lisphdr);
 
 	rcu_read_lock();
-	dst = lisp_dst_lookup(net, old_iph->daddr);
+	dst = lisp_rloc_lookup(net, old_iph->daddr);
 	rcu_read_unlock();
 	if (dst == -1)
 		/* TODO: send a Map-Request (and packet cache?) */
