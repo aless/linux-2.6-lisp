@@ -35,8 +35,6 @@
 #include <net/netlink.h>
 #include <net/genetlink.h>
 
-#define PRINTK(_fmt, args...) printk(KERN_INFO "lisp: " _fmt, ##args)
-
 #define LISP_ENCAPTYPE_UDP 1
 #define HASH_SIZE        16
 #define HASH(addr) (((__force u32)addr^((__force u32)addr>>4))&0xF)
@@ -103,6 +101,7 @@ static void lisp_tunnel_add(struct net *net, struct lisp_tunnel *tun)
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	unsigned h = HASH(tun->parms.iph.saddr);
 
+	pr_debug("LISP: register tunnel: %s\n", tun->dev->name);
 	list_add_tail_rcu(&tun->list, &lin->tunnels[h]);
 }
 
@@ -161,7 +160,7 @@ static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
 	int err = -ENOMEM;
 
 	/* TODO: search and replace/update map*/
-
+	pr_debug("LISP: adding map: eid:%x rloc:%x\n", eid, rloc);
 	map = kmalloc(sizeof(struct map_entry), GFP_KERNEL);
 	if (!map)
 		goto out;
@@ -481,7 +480,7 @@ int lisp_udp_encap_rcv(struct sock *sk, struct sk_buff *skb)
 	struct lisp_tunnel *tun;
 	struct iphdr *iph = ip_hdr(skb);
 
-	pr_debug("received %d bytes\n", skb->len);
+	pr_debug("LISP: received %d bytes\n", skb->len);
 
 	rcu_read_lock();
 
@@ -616,6 +615,8 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	__wsum csum;
 	int lisp_hlen = sizeof(struct iphdr) + sizeof(struct udphdr) +
 		sizeof(struct lisphdr);
+
+	pr_debug("LISP: transmitting %d bytes\n", skb->len);
 
 	rcu_read_lock();
 	dst = lisp_rloc_lookup(net, old_iph->daddr);
