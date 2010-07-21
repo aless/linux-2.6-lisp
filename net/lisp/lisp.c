@@ -40,8 +40,6 @@
 #define HASH_SIZE        16
 #define HASH(addr) (((__force u32)addr^((__force u32)addr>>4))&0xF)
 
-static DEFINE_SPINLOCK(lisp_lock);
-
 struct rloc_entry {
 	struct list_head	list;
 	struct rcu_head		rcu;
@@ -67,7 +65,9 @@ struct lisp_tunnel {
 	struct ip_tunnel_parm	parms;
 };
 
+/* TODO: split locking for tunnels and maps */
 struct lisp_net {
+	spinlock_t		lock; /* Protects tunnels and maps */
 	struct list_head	tunnels[HASH_SIZE];
 	struct list_head	maps;
 	struct net_device	*fb_tunnel_dev;	/* Fallback tunnel */
@@ -97,18 +97,35 @@ static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 	return NULL;
 }
 
-static void lisp_tunnel_add(struct net *net, struct lisp_tunnel *tun)
+static void __lisp_tunnel_add(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
-	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	unsigned h = HASH(tun->parms.iph.saddr);
 
-	pr_debug("LISP: register tunnel: %s\n", tun->dev->name);
 	list_add_tail_rcu(&tun->list, &lin->tunnels[h]);
+
 }
 
-static void lisp_tunnel_del(struct lisp_tunnel *tun)
+static void lisp_tunnel_add(struct lisp_net *lin, struct lisp_tunnel *tun)
+{
+	pr_debug("LISP: register tunnel: %s\n", tun->dev->name);
+
+	spin_lock_bh(&lin->lock);
+	__lisp_tunnel_add(lin, tun);
+	spin_unlock_bh(&lin->lock);
+}
+
+static void __lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
 	list_del_rcu(&tun->list);
+}
+
+static void lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
+{
+	pr_debug("LISP: unregister tunnel: %s\n", tun->dev->name);
+
+	spin_lock_bh(&lin->lock);
+	__lisp_tunnel_del(lin, tun);
+	spin_unlock_bh(&lin->lock);
 }
 
 /* TODO: this lookup and the map structure need optimization*/
@@ -184,9 +201,9 @@ static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
 
 	list_add(&rloc_ent->list, &map->rlocs);
 
-	spin_lock_bh(&lisp_lock);
+	spin_lock_bh(&lin->lock);
 	list_add_rcu(&map->list, &lin->maps);
-	spin_unlock_bh(&lisp_lock);
+	spin_unlock_bh(&lin->lock);
 
 	atomic_set(&map->rloc_cnt, 1);
 
@@ -278,9 +295,7 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 			if (err < 0)
 				goto add_err;
 
-			spin_lock_bh(&lisp_lock);
-			lisp_tunnel_add(net, tun);
-			spin_unlock_bh(&lisp_lock);
+			lisp_tunnel_add(lin, tun);
 		}
 		err = 0;
 		break;
@@ -305,9 +320,7 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		} else
 			tun = netdev_priv(dev);
 
-		spin_lock_bh(&lisp_lock);
-		lisp_tunnel_del(tun);
-		spin_unlock_bh(&lisp_lock);
+		lisp_tunnel_del(lin, tun);
 
 		unregister_netdevice(dev);
 		err = 0;
@@ -787,6 +800,7 @@ static int __net_init lisp_init_net(struct net *net)
 	for (i = 0; i < HASH_SIZE; ++i)
 		INIT_LIST_HEAD(&lin->tunnels[i]);
 
+	spin_lock_init(&lin->lock);
 	INIT_LIST_HEAD(&lin->maps);
 
 	lin->fb_tunnel_dev = alloc_netdev(sizeof(struct lisp_tunnel), "lisp0",
@@ -810,7 +824,7 @@ err_alloc_dev:
 	return err;
 }
 
-static void lisp_destroy_maps(struct lisp_net *lin)
+static void __lisp_destroy_maps(struct lisp_net *lin)
 {
 	struct map_entry *map, *mtmp;
 	struct rloc_entry *rloc, *rtmp;
@@ -844,9 +858,9 @@ static void __net_exit lisp_exit_net(struct net *net)
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	LIST_HEAD(list);
 
-	spin_lock_bh(&lisp_lock);
-	lisp_destroy_maps(lin);
-	spin_unlock_bh(&lisp_lock);
+	spin_lock_bh(&lin->lock);
+	__lisp_destroy_maps(lin);
+	spin_unlock_bh(&lin->lock);
 
 	rtnl_lock();
 	lisp_destroy_tunnels(lin, &list);
