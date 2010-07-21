@@ -339,16 +339,13 @@ static struct genl_family lisp_gnl_family = {
 
 static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 {
-	__be32 eid = htonl(nla_get_u32(info->attrs[LISP_GNL_ATTR_EID]));
-	__be32 rloc = htonl(nla_get_u32(info->attrs[LISP_GNL_ATTR_RLOC]));
+	__be32 eid = nla_get_u32(info->attrs[LISP_GNL_ATTR_EID]);
+	__be32 rloc = nla_get_u32(info->attrs[LISP_GNL_ATTR_RLOC]);
 	__u8 prio = nla_get_u8(info->attrs[LISP_GNL_ATTR_PRIO]);
 	__u8 weight = nla_get_u8(info->attrs[LISP_GNL_ATTR_WEIGHT]);
 	struct net *net = genl_info_net(info);
 
-	lisp_map_add(net, eid, 0xffffffff, rloc, prio, weight);
-	/*TODO: error check*/
-
-	return 0;
+	return lisp_map_add(net, eid, 0xffffffff, rloc, prio, weight);
 }
 
 static struct genl_ops lisp_gnl_ops_echo = {
