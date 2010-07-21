@@ -34,6 +34,7 @@
 #include <net/ipip.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>
+#include <linux/inetdevice.h>
 
 #define LISP_ENCAPTYPE_UDP 1
 #define HASH_SIZE        16
@@ -84,7 +85,7 @@ static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 	unsigned h = HASH(remote);
 
 	list_for_each_entry_rcu(tun, &(lin->tunnels[h]),  list) {
-		if (tun->parms.iph.saddr == remote)
+		if (inet_select_addr(tun->dev, 0, 0) == remote)
 			return tun;
 	};
 
@@ -484,7 +485,7 @@ int lisp_udp_encap_rcv(struct sock *sk, struct sk_buff *skb)
 
 	rcu_read_lock();
 
-	tun = lisp_tunnel_lookup(dev_net(skb->dev), iph->saddr);
+	tun = lisp_tunnel_lookup(dev_net(skb->dev), iph->daddr);
 	if (tun == NULL)
 		goto drop;
 
