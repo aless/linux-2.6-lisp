@@ -1,5 +1,16 @@
 config LISP
-    tristate "Locator/ID Separation ProtocoL (LISP) (EXPERIMENTAL)"
-    depends on INET && EXPERIMENTAL
-    help
-      Locator/ID Separation Protocol
+	tristate "Locator/ID Separation ProtocoL (LISP) (EXPERIMENTAL)"
+	depends on INET && EXPERIMENTAL
+	---help---
+	Locator/ID Separation Protocol.
+
+if LISP
+
+config  LISP_DEBUG
+	bool "Enable LISP Debug"
+	default n
+	--- help ---
+	Enable the inclusion of debug code in LISP stack.
+	If unsure say N.
+
+endif
