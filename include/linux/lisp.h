@@ -105,6 +105,13 @@ enum {
 };
 #define LISP_GNL_CMD_MAX (__LISP_GNL_CMD_MAX - 1)
 
+/* Map Flags */
+#define LISP_MAP_F_UP		1	/* Mapping usable */
+#define LISP_MAP_F_LOCAL	2	/* Mapping part of LISP Databse */
+#define LISP_MAP_F_STATIC	4	/* Mapping added manually */
+
+#define LISP_RLOC_F_REACH	1	/* RLOC rechable */
+
 
 #ifdef __KERNEL__
 #include <linux/skbuff.h>
