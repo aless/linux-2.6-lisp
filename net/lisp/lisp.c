@@ -75,6 +75,7 @@ struct lisp_net {
 
 static int lisp_net_id __read_mostly;
 
+static void lisp_map_del_local(struct lisp_net *lin, __be32 rloc);
 static void lisp_dev_setup(struct net_device *dev);
 
 static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
@@ -121,7 +122,11 @@ static void __lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
 
 static void lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
+	__be32 addr = inet_select_addr(tun->dev, 0, 0);
+
 	pr_debug("LISP: unregister tunnel: %s\n", tun->dev->name);
+
+	lisp_map_del_local(lin, addr);
 
 	spin_lock_bh(&lin->lock);
 	__lisp_tunnel_del(lin, tun);
@@ -165,10 +170,41 @@ void lisp_map_free(struct rcu_head *head)
 	kfree(map);
 }
 
-static void lisp_map_del(struct map_entry *map)
+static void __lisp_map_del(struct map_entry *map)
 {
+	struct rloc_entry *rloc, *rtmp;
+	int cnt = atomic_read(&map->rloc_cnt);
+
+	if (cnt > 0) {
+		list_for_each_entry_safe(rloc, rtmp, &map->rlocs, list)
+			lisp_rloc_del(rloc);
+	}
 	list_del_rcu(&map->list);
 	call_rcu(&map->rcu, lisp_map_free);
+}
+
+static void lisp_map_del(struct lisp_net *lin, struct map_entry *map)
+{
+	spin_lock_bh(&lin->lock);
+	__lisp_map_del(map);
+	spin_unlock_bh(&lin->lock);
+}
+
+static void lisp_map_del_local(struct lisp_net *lin, __be32 rloc)
+{
+	struct map_entry *map;
+	struct rloc_entry *rloc_ent;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(map, &(lin->maps),  list) {
+		if (atomic_read(&map->rloc_cnt) > 0) {
+			rloc_ent = list_first_entry_rcu(&map->rlocs,
+						   struct rloc_entry, list);
+			if (rloc_ent->rloc == rloc)
+				lisp_map_del(lin, map);
+		}
+	};
+	rcu_read_unlock();
 }
 
 static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
@@ -233,19 +269,21 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 	switch (cmd) {
 	case SIOCGETTUNNEL:
 		tun = NULL;
+
+		rcu_read_lock();
 		if (dev == lin->fb_tunnel_dev) {
 			if (copy_from_user(&parms, ifr->ifr_ifru.ifru_data,
 					   sizeof(parms))) {
 				err = -EFAULT;
 				break;
 			}
-			rcu_read_lock();
 			tun = lisp_tunnel_lookup(net, parms.iph.saddr);
-			rcu_read_unlock();
 		}
 		if (tun == NULL)
 			tun = netdev_priv(dev);
 		memcpy(&parms, &tun->parms, sizeof(parms));
+		rcu_read_unlock();
+
 		if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms,
 				 sizeof(parms)))
 			err = -EFAULT;
@@ -843,16 +881,9 @@ err_alloc_dev:
 static void __lisp_destroy_maps(struct lisp_net *lin)
 {
 	struct map_entry *map, *mtmp;
-	struct rloc_entry *rloc, *rtmp;
 
 	list_for_each_entry_safe(map, mtmp, &lin->maps, list) {
-		int cnt = atomic_read(&map->rloc_cnt);
-
-		if (cnt > 0) {
-			list_for_each_entry_safe(rloc, rtmp, &map->rlocs, list)
-				lisp_rloc_del(rloc);
-		}
-		lisp_map_del(map);
+		__lisp_map_del(map);
 	}
 }
 
