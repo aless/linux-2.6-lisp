@@ -46,7 +46,7 @@ struct rloc_entry {
 	__be32			rloc;
 	int			priority;
 	int			weight;
-	char			rloc_flags;
+	char			flags;
 };
 
 struct map_entry {
@@ -56,7 +56,7 @@ struct map_entry {
 	__be32			mask;
 	struct list_head	rlocs;
 	atomic_t		rloc_cnt;
-	char			map_flags;
+	char			flags;
 };
 
 struct lisp_tunnel {
@@ -136,10 +136,12 @@ static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
 	struct rloc_entry *ret;
 
 	list_for_each_entry_rcu(map, &(lin->maps),  list) {
-		if (map->eid == eid && atomic_read(&map->rloc_cnt) > 0) {
+		if (map->eid == eid && atomic_read(&map->rloc_cnt) > 0 &&
+		    map->flags&LISP_MAP_F_UP) {
 			ret = list_first_entry_rcu(&map->rlocs,
 						   struct rloc_entry, list);
-			return ret->rloc;
+			if (ret->flags&LISP_RLOC_F_REACH)
+				return ret->rloc;
 		}
 	};
 	return -1;
@@ -170,7 +172,8 @@ static void lisp_map_del(struct map_entry *map)
 }
 
 static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
-			__be32 rloc, int prio, int weight)
+			char map_flags, __be32 rloc, int prio,
+			int weight, char rloc_flags)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_entry *map;
@@ -187,6 +190,7 @@ static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
 	INIT_RCU_HEAD(&map->rcu);
 	map->eid = eid;
 	map->mask = mask;
+	map->flags = map_flags;
 
 	rloc_ent = kmalloc(sizeof(struct rloc_entry), GFP_KERNEL);
 	if (!rloc_ent)
@@ -198,6 +202,7 @@ static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
 	rloc_ent->rloc = rloc;
 	rloc_ent->priority = prio;
 	rloc_ent->weight = weight;
+	rloc_ent->flags = rloc_flags;
 
 	list_add(&rloc_ent->list, &map->rlocs);
 
@@ -358,7 +363,18 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 	__u8 weight = nla_get_u8(info->attrs[LISP_GNL_ATTR_WEIGHT]);
 	struct net *net = genl_info_net(info);
 
-	return lisp_map_add(net, eid, 0xffffffff, rloc, prio, weight);
+	/* The mappings added manually are assumed to be usable
+	   and rechable (until verification) */
+	char mapflags = LISP_MAP_F_STATIC | LISP_MAP_F_UP;
+	char rlocflags = LISP_RLOC_F_REACH;
+
+	rcu_read_lock();
+	if (lisp_tunnel_lookup(net, rloc))
+		mapflags |= LISP_MAP_F_LOCAL;
+	rcu_read_unlock();
+
+	return lisp_map_add(net, eid, 0xffffffff, mapflags,
+			    rloc, prio, weight, rlocflags);
 }
 
 static struct genl_ops lisp_gnl_ops_echo = {
