@@ -8,4 +8,6 @@ endif
 
 ccflags-y := $(LISP_DBG_FLAGS)
 
+lisp-objs += lisp_dev.o
+
 obj-$(CONFIG_LISP) += lisp.o
