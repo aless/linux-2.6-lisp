@@ -378,9 +378,9 @@ out:
 	return err;
 }
 
-static struct genl_ops lisp_gnl_ops_echo = {
+static struct genl_ops lisp_gnl_ops_addmap = {
 	.cmd = LISP_GNL_CMD_ADDMAP,
-	.flags = 0,
+	.flags = GENL_ADMIN_PERM,
 	.policy = lisp_gnl_policy,
 	.doit = lisp_gnl_doit_addmap,
 	.dumpit = NULL,
@@ -905,7 +905,7 @@ static int __init lisp_init(void)
 	if (err)
 		goto out_unregister_sock;
 
-	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_echo);
+	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_addmap);
 	if (err)
 		goto out_unregister_nl;
 
