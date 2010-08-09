@@ -38,13 +38,17 @@
 
 #include "lisp.h"
 
+extern void map_hash_init(void);
+extern struct map_table *map_hash_table(void);
+extern int map_table_insert(struct map_table *tb, struct map_config *cfg);
+extern int map_table_lookup(struct map_table *tb, const struct flowi *flp,
+			    struct map_result *res);
+extern int map_table_flush(struct map_table *tb);
 
+static void lisp_dev_setup(struct net_device *dev);
 
 
 static int lisp_net_id __read_mostly;
-
-static void lisp_map_del_local(struct lisp_net *lin, __be32 rloc);
-static void lisp_dev_setup(struct net_device *dev);
 
 static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 {
@@ -90,34 +94,31 @@ static void __lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
 
 static void lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
-	__be32 addr = inet_select_addr(tun->dev, 0, 0);
+	//__be32 addr = inet_select_addr(tun->dev, 0, 0);
 
 	pr_debug("LISP: unregister tunnel: %s\n", tun->dev->name);
 
-	lisp_map_del_local(lin, addr);
+	/* TODO: remove local rloc mapings */
 
 	spin_lock_bh(&lin->lock);
 	__lisp_tunnel_del(lin, tun);
 	spin_unlock_bh(&lin->lock);
 }
 
-/* TODO: this lookup and the map structure need optimization*/
 static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
-	struct map_entry *map;
-	struct rloc_entry *ret;
+	struct map_result mr;
+	struct flowi fl;
+	int res;
 
-	list_for_each_entry_rcu(map, &(lin->maps),  list) {
-		if (map->eid == eid && atomic_read(&map->rloc_cnt) > 0 &&
-		    map->flags&LISP_MAP_F_UP) {
-			ret = list_first_entry_rcu(&map->rlocs,
-						   struct rloc_entry, list);
-			if (ret->flags&LISP_RLOC_F_REACH)
-				return ret->rloc;
-		}
-	};
-	return -1;
+	fl.fl4_dst = htonl(eid);
+
+	res = map_table_lookup(lin->maps, &fl, &mr);
+	if (res)
+		return mr.rloc->rloc;
+	else
+		return -1;	    
 }
 
 void lisp_rloc_free(struct rcu_head *head)
@@ -158,6 +159,7 @@ static void lisp_map_del(struct lisp_net *lin, struct map_entry *map)
 	spin_unlock_bh(&lin->lock);
 }
 
+/*
 static void lisp_map_del_local(struct lisp_net *lin, __be32 rloc)
 {
 	struct map_entry *map;
@@ -174,55 +176,10 @@ static void lisp_map_del_local(struct lisp_net *lin, __be32 rloc)
 	};
 	rcu_read_unlock();
 }
+*/
 
-static int lisp_map_add(struct net *net, __be32 eid, __be32 mask,
-			char map_flags, __be32 rloc, int prio,
-			int weight, char rloc_flags)
-{
-	struct lisp_net *lin = net_generic(net, lisp_net_id);
-	struct map_entry *map;
-	struct rloc_entry *rloc_ent;
-	int err = -ENOMEM;
 
-	/* TODO: search and replace/update map*/
-	pr_debug("LISP: adding map: eid:%x rloc:%x\n", eid, rloc);
-	map = kmalloc(sizeof(struct map_entry), GFP_KERNEL);
-	if (!map)
-		goto out;
 
-	INIT_LIST_HEAD(&map->rlocs);
-	INIT_RCU_HEAD(&map->rcu);
-	map->eid = eid;
-	map->mask = mask;
-	map->flags = map_flags;
-
-	rloc_ent = kmalloc(sizeof(struct rloc_entry), GFP_KERNEL);
-	if (!rloc_ent)
-		goto out_release_map;
-
-	err = 0;
-
-	INIT_RCU_HEAD(&rloc_ent->rcu);
-	rloc_ent->rloc = rloc;
-	rloc_ent->priority = prio;
-	rloc_ent->weight = weight;
-	rloc_ent->flags = rloc_flags;
-
-	list_add(&rloc_ent->list, &map->rlocs);
-
-	spin_lock_bh(&lin->lock);
-	list_add_rcu(&map->list, &lin->maps);
-	spin_unlock_bh(&lin->lock);
-
-	atomic_set(&map->rloc_cnt, 1);
-
-	return err;
-
-out_release_map:
-	kfree(map);
-out:
-	return err;
-}
 
 static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		int cmd)
@@ -363,24 +320,62 @@ static struct genl_family lisp_gnl_family = {
 
 static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 {
-	__be32 eid = nla_get_u32(info->attrs[LISP_GNL_ATTR_EID]);
-	__be32 rloc = nla_get_u32(info->attrs[LISP_GNL_ATTR_RLOC]);
-	__u8 prio = nla_get_u8(info->attrs[LISP_GNL_ATTR_PRIO]);
-	__u8 weight = nla_get_u8(info->attrs[LISP_GNL_ATTR_WEIGHT]);
 	struct net *net = genl_info_net(info);
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct map_config mc;
+	struct nlattr *att;
+	int cnt, len, err;
+	int count = 0;
+	__be32 v;
+	__u8 flags;
+
+	err = -ENOMEM;
+
+	INIT_LIST_HEAD(&mc.mc_rlocs);
+
+	nla_for_each_nested(att, info->attrs[LISP_GNL_ATTR_MAP], cnt) {
+		struct rloc_entry *re;
+
+		switch(nla_type(att)) {
+		case LISP_GNL_ATTR_MAP_EID:
+			v = nla_get_u32(att);
+			mc.mc_dst = v;
+			break;
+
+		case LISP_GNL_ATTR_MAP_EIDLEN:
+			len = nla_get_u8(att);
+			mc.mc_dst_len = len;
+			break;
+
+		case LISP_GNL_ATTR_MAP_RLOC:
+			v = nla_get_u32(att);
+			re = kmalloc(sizeof(struct rloc_entry), GFP_KERNEL);
+			if (!re)
+				goto out;
+			re->rloc = htonl(v);
+			re->flags = LISP_RLOC_F_REACH;
+
+			INIT_RCU_HEAD(&re->rcu);
+			INIT_LIST_HEAD(&re->list);
+			list_add(&re->list, &mc.mc_rlocs);
+			count++;
+		}
+	}
+
+	mc.mc_rloc_cnt = count;
+
+	flags = nla_get_u8(info->attrs[LISP_GNL_ATTR_MAPF]);
+	mc.mc_map_flags = flags;
 
 	/* The mappings added manually are assumed to be usable
-	   and rechable (until verification) */
-	char mapflags = LISP_MAP_F_STATIC | LISP_MAP_F_UP;
-	char rlocflags = LISP_RLOC_F_REACH;
+	   and rechable until verification */
+	mc.mc_map_flags |= LISP_MAP_F_STATIC | LISP_MAP_F_UP;
 
 	rcu_read_lock();
-	if (lisp_tunnel_lookup(net, rloc))
-		mapflags |= LISP_MAP_F_LOCAL;
+	err = map_table_insert(lin->maps, &mc);
 	rcu_read_unlock();
-
-	return lisp_map_add(net, eid, 0xffffffff, mapflags,
-			    rloc, prio, weight, rlocflags);
+out:
+	return err;
 }
 
 static struct genl_ops lisp_gnl_ops_echo = {
@@ -823,7 +818,7 @@ static int __net_init lisp_init_net(struct net *net)
 		INIT_LIST_HEAD(&lin->tunnels[i]);
 
 	spin_lock_init(&lin->lock);
-	INIT_LIST_HEAD(&lin->maps);
+	lin->maps = map_hash_table();
 
 	lin->fb_tunnel_dev = alloc_netdev(sizeof(struct lisp_tunnel), "lisp0",
 					   lisp_dev_setup);
@@ -846,15 +841,6 @@ err_alloc_dev:
 	return err;
 }
 
-static void __lisp_destroy_maps(struct lisp_net *lin)
-{
-	struct map_entry *map, *mtmp;
-
-	list_for_each_entry_safe(map, mtmp, &lin->maps, list) {
-		__lisp_map_del(map);
-	}
-}
-
 static void lisp_destroy_tunnels(struct lisp_net *lin, struct list_head *list)
 {
 	int i;
@@ -871,16 +857,22 @@ static void lisp_destroy_tunnels(struct lisp_net *lin, struct list_head *list)
 static void __net_exit lisp_exit_net(struct net *net)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	int res;
 	LIST_HEAD(list);
 
 	spin_lock_bh(&lin->lock);
-	__lisp_destroy_maps(lin);
+	rcu_read_lock();
+	res = map_table_flush(lin->maps);
+	rcu_read_unlock();
+	printk(KERN_INFO "flush: %d\n", res);
 	spin_unlock_bh(&lin->lock);
 
 	rtnl_lock();
+	rcu_read_lock();
 	lisp_destroy_tunnels(lin, &list);
 	unregister_netdevice_queue(lin->fb_tunnel_dev, &list);
 	unregister_netdevice_many(&list);
+	rcu_read_unlock();
 	rtnl_unlock();
 }
 
@@ -916,6 +908,8 @@ static int __init lisp_init(void)
 	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_echo);
 	if (err)
 		goto out_unregister_nl;
+
+	map_hash_init();
 
 out:
 	return err;

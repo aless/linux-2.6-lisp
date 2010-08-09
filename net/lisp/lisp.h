@@ -44,7 +44,7 @@ struct map_table {
 struct lisp_net {
 	spinlock_t		lock; /* Protects tunnels and maps */
 	struct list_head	tunnels[HASH_SIZE];
-	struct list_head	maps;
+	struct map_table	*maps;
 	struct net_device	*fb_tunnel_dev;	/* Fallback tunnel */
 };
 

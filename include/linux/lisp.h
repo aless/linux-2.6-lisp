@@ -85,9 +85,22 @@ enum {
 	LISP_GNL_ATTR_RLOC,
 	LISP_GNL_ATTR_WEIGHT,
 	LISP_GNL_ATTR_PRIO,
+	LISP_GNL_ATTR_MAP,
+	LISP_GNL_ATTR_MAPF,
 	__LISP_GNL_ATTR_MAX,
 };
 #define LISP_GNL_ATTR_MAX (__LISP_GNL_ATTR_MAX - 1)
+
+enum {
+	LISP_GNL_ATTR_MAP_UNSPEC,
+	LISP_GNL_ATTR_MAP_EID,
+	LISP_GNL_ATTR_MAP_EIDLEN,
+	LISP_GNL_ATTR_MAP_RLOC,
+	LISP_GNL_ATTR_MAP_WEIGHT,
+	LISP_GNL_ATTR_MAP_PRIO,
+	__LISP_GNL_ATTR_MAP_MAX,
+};
+#define LISP_GNL_ATTR_MAP_MAX (__LISP_GNL_ATTR_MAP_MAX - 1)
 
 /* Attribute policy */
 static struct nla_policy lisp_gnl_policy[LISP_GNL_ATTR_MAX + 1] = {
@@ -95,12 +108,23 @@ static struct nla_policy lisp_gnl_policy[LISP_GNL_ATTR_MAX + 1] = {
 	[LISP_GNL_ATTR_RLOC]	= { .type = NLA_U32 },
 	[LISP_GNL_ATTR_WEIGHT]	= { .type = NLA_U8 },
 	[LISP_GNL_ATTR_PRIO]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_MAP]	= { .type = NLA_NESTED },
+	[LISP_GNL_ATTR_MAPF]	= { .type = NLA_U8 },
+};
+
+static struct nla_policy lisp_gnl_map_policy[LISP_GNL_ATTR_MAP_MAX + 1] = {
+	[LISP_GNL_ATTR_MAP_EID]		= { .type = NLA_U32 },
+	[LISP_GNL_ATTR_MAP_EIDLEN]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_MAP_RLOC]	= { .type = NLA_U32 },
+	[LISP_GNL_ATTR_MAP_WEIGHT]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_MAP_PRIO]	= { .type = NLA_U8 },
 };
 
 /* Commands */
 enum {
 	LISP_GNL_CMD_UNSPEC,
 	LISP_GNL_CMD_ADDMAP,
+	LISP_GNL_CMD_SHOWMAP,
 	__LISP_GNL_CMD_MAX,
 };
 #define LISP_GNL_CMD_MAX (__LISP_GNL_CMD_MAX - 1)
@@ -110,6 +134,7 @@ enum {
 #define LISP_MAP_F_LOCAL	2	/* Mapping part of LISP Databse */
 #define LISP_MAP_F_STATIC	4	/* Mapping added manually */
 
+/* RLOC Flags */
 #define LISP_RLOC_F_REACH	1	/* RLOC rechable */
 
 
