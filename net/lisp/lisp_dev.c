@@ -36,42 +36,10 @@
 #include <net/genetlink.h>
 #include <linux/inetdevice.h>
 
-#define LISP_ENCAPTYPE_UDP 1
-#define HASH_SIZE        16
-#define HASH(addr) (((__force u32)addr^((__force u32)addr>>4))&0xF)
+#include "lisp.h"
 
-struct rloc_entry {
-	struct list_head	list;
-	struct rcu_head		rcu;
-	__be32			rloc;
-	int			priority;
-	int			weight;
-	char			flags;
-};
 
-struct map_entry {
-	struct list_head	list;
-	struct rcu_head		rcu;
-	__be32			eid;
-	__be32			mask;
-	struct list_head	rlocs;
-	atomic_t		rloc_cnt;
-	char			flags;
-};
 
-struct lisp_tunnel {
-	struct list_head	list;
-	struct net_device	*dev;
-	struct ip_tunnel_parm	parms;
-};
-
-/* TODO: split locking for tunnels and maps */
-struct lisp_net {
-	spinlock_t		lock; /* Protects tunnels and maps */
-	struct list_head	tunnels[HASH_SIZE];
-	struct list_head	maps;
-	struct net_device	*fb_tunnel_dev;	/* Fallback tunnel */
-};
 
 static int lisp_net_id __read_mostly;
 
