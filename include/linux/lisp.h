@@ -81,10 +81,6 @@ struct lisphdr {
 /* Attributes */
 enum {
 	LISP_GNL_ATTR_UNSPEC,
-	LISP_GNL_ATTR_EID,
-	LISP_GNL_ATTR_RLOC,
-	LISP_GNL_ATTR_WEIGHT,
-	LISP_GNL_ATTR_PRIO,
 	LISP_GNL_ATTR_MAP,
 	LISP_GNL_ATTR_MAPF,
 	__LISP_GNL_ATTR_MAX,
@@ -104,10 +100,6 @@ enum {
 
 /* Attribute policy */
 static struct nla_policy lisp_gnl_policy[LISP_GNL_ATTR_MAX + 1] = {
-	[LISP_GNL_ATTR_EID]	= { .type = NLA_U32 },
-	[LISP_GNL_ATTR_RLOC]	= { .type = NLA_U32 },
-	[LISP_GNL_ATTR_WEIGHT]	= { .type = NLA_U8 },
-	[LISP_GNL_ATTR_PRIO]	= { .type = NLA_U8 },
 	[LISP_GNL_ATTR_MAP]	= { .type = NLA_NESTED },
 	[LISP_GNL_ATTR_MAPF]	= { .type = NLA_U8 },
 };
