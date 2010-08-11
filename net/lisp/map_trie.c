@@ -1263,7 +1263,6 @@ static struct leaf *trie_nextleaf(struct leaf *l)
 	return leaf_walk_rcu(p, c);
 }
 
-/*
 static struct leaf *trie_leafindex(struct trie *t, int index)
 {
 	struct leaf *l = trie_firstleaf(t);
@@ -1273,7 +1272,6 @@ static struct leaf *trie_leafindex(struct trie *t, int index)
 
 	return l;
 }
-*/
 
 /*
  * Caller must hold RTNL.
@@ -1297,6 +1295,121 @@ int map_table_flush(struct map_table *tb)
 
 	pr_debug("trie_flush found=%d\n", found);
 	return found;
+}
+
+static int fn_trie_dump_me(t_key key, int plen, struct list_head *fah,
+			   struct map_table *tb, struct genl_family *family,
+			   struct sk_buff *skb, struct netlink_callback *cb)
+{
+	int i, s_i;
+	struct map_entry *fa;
+	__be32 xkey = htonl(key);
+
+	s_i = cb->args[5];
+	i = 0;
+
+	/* rcu_read_lock is hold by caller */
+
+	list_for_each_entry_rcu(fa, fah, list) {
+		if (i < s_i) {
+			i++;
+			continue;
+		}
+
+		if (dump_map(skb, NETLINK_CB(cb->skb).pid,
+				  cb->nlh->nlmsg_seq,
+				  family,
+				  xkey,
+				  plen,
+				  &fa->rlocs,
+				  NLM_F_MULTI) < 0) {
+			cb->args[5] = i;
+			return -1;
+		}
+		i++;
+	}
+	cb->args[5] = i;
+	return skb->len;
+}
+
+
+static int fn_trie_dump_leaf(struct leaf *l, struct map_table *tb,
+			     struct genl_family *family,
+			     struct sk_buff *skb, struct netlink_callback *cb)
+{
+	struct leaf_info *li;
+	struct hlist_node *node;
+	int i, s_i;
+
+	s_i = cb->args[4];
+	i = 0;
+
+	/* rcu_read_lock is hold by caller */
+	hlist_for_each_entry_rcu(li, node, &l->list, hlist) {
+		if (i < s_i) {
+			i++;
+			continue;
+		}
+
+		if (i > s_i)
+			cb->args[5] = 0;
+
+		if (list_empty(&li->datalh))
+			continue;
+
+		if (fn_trie_dump_me(l->key, li->plen, &li->datalh, tb,
+				    family, skb, cb) < 0) {
+			cb->args[4] = i;
+			return -1;
+		}
+		i++;
+	}
+
+	cb->args[4] = i;
+	return skb->len;
+}
+
+int map_table_dump(struct map_table *tb, struct genl_family *family,
+		   struct sk_buff *skb,
+		   struct netlink_callback *cb)
+{
+	struct leaf *l;
+	struct trie *t = (struct trie *) tb->tb_data;
+	t_key key = cb->args[2];
+	int count = cb->args[3];
+
+	rcu_read_lock();
+	/* Dump starting at last key.
+	 * Note: 0.0.0.0/0 (ie default) is first key.
+	 */
+	if (count == 0)
+		l = trie_firstleaf(t);
+	else {
+		/* Normally, continue from last key, but if that is missing
+		 * fallback to using slow rescan
+		 */
+		l = trie_find_node(t, key);
+		if (!l)
+			l = trie_leafindex(t, count);
+	}
+
+	while (l) {
+		cb->args[2] = l->key;
+		if (fn_trie_dump_leaf(l, tb, family, skb, cb) < 0) {
+			cb->args[3] = count;
+			rcu_read_unlock();
+			return -1;
+		}
+
+		++count;
+		l = trie_nextleaf(l);
+		memset(&cb->args[4], 0,
+		       sizeof(cb->args) - 4*sizeof(cb->args[0]));
+	}
+	cb->args[3] = count;
+	rcu_read_unlock();
+
+	return skb->len;
 }
 
 int map_table_insert(struct map_table *tb, struct map_config *cfg)

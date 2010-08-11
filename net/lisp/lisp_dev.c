@@ -44,6 +44,8 @@ extern int map_table_insert(struct map_table *tb, struct map_config *cfg);
 extern int map_table_lookup(struct map_table *tb, const struct flowi *flp,
 			    struct map_result *res);
 extern int map_table_flush(struct map_table *tb);
+extern int map_table_dump(struct map_table *tb, struct genl_family *family,
+			  struct sk_buff *skb, struct netlink_callback *cb);
 
 static void lisp_dev_setup(struct net_device *dev);
 
@@ -384,6 +386,29 @@ static struct genl_ops lisp_gnl_ops_addmap = {
 	.policy = lisp_gnl_policy,
 	.doit = lisp_gnl_doit_addmap,
 	.dumpit = NULL,
+};
+
+static int lisp_gnl_dumpit_showmap(struct sk_buff *skb,
+				   struct netlink_callback *cb)
+{
+	struct net *net = dev_net(skb->dev);
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	int err;
+
+	err = map_table_dump(lin->maps, &lisp_gnl_family, skb, cb);
+
+	if (err >= 0)
+		return 0;
+	else
+		return err;
+}
+
+static struct genl_ops lisp_gnl_ops_showmap = {
+	.cmd = LISP_GNL_CMD_SHOWMAP,
+	.flags = 0,
+	.policy = lisp_gnl_policy,
+	.doit = NULL,
+	.dumpit = lisp_gnl_dumpit_showmap,
 };
 
 /*****************************************************************************
@@ -906,6 +931,10 @@ static int __init lisp_init(void)
 		goto out_unregister_sock;
 
 	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_addmap);
+	if (err)
+		goto out_unregister_nl;
+
+	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_showmap);
 	if (err)
 		goto out_unregister_nl;
 

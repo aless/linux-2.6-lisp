@@ -64,6 +64,42 @@ struct rloc_entry *rloc_find(struct list_head *reh)
 	return NULL;
 }
 
+int dump_map(struct sk_buff *skb, u32 pid, u32 seq, struct genl_family *family,
+	     __be32 dst, int dst_len, struct list_head *rlocs,
+	     unsigned int flags)
+{
+	void *msg_head;
+	int err;
+	struct rloc_entry *re;
+	struct nlattr *mp;
+
+	msg_head = genlmsg_put(skb, pid, seq, family,
+			       flags, LISP_GNL_CMD_SHOWMAP);
+	if (msg_head == NULL) {
+		err = -ENOMEM;
+		goto failure;
+	}
+
+	mp = nla_nest_start(skb, LISP_GNL_ATTR_MAP);
+
+	NLA_PUT_BE32(skb, LISP_GNL_ATTR_MAP_EID, dst);
+	NLA_PUT_U8(skb, LISP_GNL_ATTR_MAP_EIDLEN, dst_len);
+
+	list_for_each_entry_rcu(re, rlocs, list) {
+		NLA_PUT_BE32(skb, LISP_GNL_ATTR_MAP_RLOC, re->rloc);
+	}
+	nla_nest_end(skb, mp);
+	genlmsg_end(skb, msg_head);
+
+	return skb->len;
+
+failure:
+	return err;
+nla_put_failure:
+	nlmsg_free(skb);
+	return -EMSGSIZE;
+}
+
 int map_semantic_match(struct list_head *head, const struct flowi *flp,
 		       struct map_result *res, int prefixlen)
 {
