@@ -117,10 +117,10 @@ static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
 	fl.fl4_dst = htonl(eid);
 
 	res = map_table_lookup(lin->maps, &fl, &mr);
-	if (res)
+	if (res != 1)
 		return mr.rloc->rloc;
 	else
-		return -1;	    
+		return 0;
 }
 
 void lisp_rloc_free(struct rcu_head *head)
@@ -354,7 +354,7 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 			re = kmalloc(sizeof(struct rloc_entry), GFP_KERNEL);
 			if (!re)
 				goto out;
-			re->rloc = htonl(v);
+			re->rloc = ntohl(v);
 			re->flags = LISP_RLOC_F_REACH;
 
 			INIT_RCU_HEAD(&re->rcu);
@@ -672,9 +672,9 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	pr_debug("LISP: transmitting %d bytes\n", skb->len);
 
 	rcu_read_lock();
-	dst = lisp_rloc_lookup(net, old_iph->daddr);
+	dst = htonl(lisp_rloc_lookup(net, ntohl(old_iph->daddr)));
 	rcu_read_unlock();
-	if (dst == -1)
+	if (dst == 0)
 		/* TODO: send a Map-Request (and packet cache?) */
 		goto tx_drop;
 

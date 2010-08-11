@@ -86,7 +86,7 @@ int dump_map(struct sk_buff *skb, u32 pid, u32 seq, struct genl_family *family,
 	NLA_PUT_U8(skb, LISP_GNL_ATTR_MAP_EIDLEN, dst_len);
 
 	list_for_each_entry_rcu(re, rlocs, list) {
-		NLA_PUT_BE32(skb, LISP_GNL_ATTR_MAP_RLOC, re->rloc);
+		NLA_PUT_BE32(skb, LISP_GNL_ATTR_MAP_RLOC, htonl(re->rloc));
 	}
 	nla_nest_end(skb, mp);
 	genlmsg_end(skb, msg_head);
