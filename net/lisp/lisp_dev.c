@@ -329,12 +329,12 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 	int cnt, len, err;
 	int count = 0;
 	__be32 v;
-	__u8 flags;
 
 	err = -ENOMEM;
 
 	INIT_LIST_HEAD(&mc.mc_rlocs);
 
+	/* TODO: sanity check */
 	nla_for_each_nested(att, info->attrs[LISP_GNL_ATTR_MAP], cnt) {
 		struct rloc_entry *re;
 
@@ -359,22 +359,39 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 
 			INIT_RCU_HEAD(&re->rcu);
 			INIT_LIST_HEAD(&re->list);
+			INIT_LIST_HEAD(&re->local_list);
 			list_add(&re->list, &mc.mc_rlocs);
 			count++;
 		}
 	}
 
 	mc.mc_rloc_cnt = count;
-
-	flags = nla_get_u8(info->attrs[LISP_GNL_ATTR_MAPF]);
-	mc.mc_map_flags = flags;
+	mc.mc_map_flags = nla_get_u8(info->attrs[LISP_GNL_ATTR_MAPF]);
 
 	/* The mappings added manually are assumed to be usable
 	   and rechable until verification */
 	mc.mc_map_flags |= LISP_MAP_F_STATIC | LISP_MAP_F_UP;
 
 	rcu_read_lock();
+
+	{
+		struct rloc_entry *re;
+		struct lisp_tunnel *tun;
+
+		/* Local rloc must be the first on the list */
+		re = list_first_entry_rcu(&mc.mc_rlocs,
+					  struct rloc_entry, list);
+		tun = lisp_tunnel_lookup(net, re->rloc);
+		if (tun) {
+			spin_lock_bh(&lin->lock);
+			list_add_tail_rcu(&re->local_list, &lin->local_rlocs);
+			spin_unlock_bh(&lin->lock);
+			mc.mc_map_flags |= LISP_MAP_F_LOCAL;
+		}
+	}
+
 	err = map_table_insert(lin->maps, &mc);
+
 	rcu_read_unlock();
 out:
 	return err;
@@ -843,6 +860,7 @@ static int __net_init lisp_init_net(struct net *net)
 		INIT_LIST_HEAD(&lin->tunnels[i]);
 
 	spin_lock_init(&lin->lock);
+	INIT_LIST_HEAD(&lin->local_rlocs);
 	lin->maps = map_hash_table();
 
 	lin->fb_tunnel_dev = alloc_netdev(sizeof(struct lisp_tunnel), "lisp0",

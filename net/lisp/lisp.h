@@ -13,6 +13,7 @@
 
 struct rloc_entry {
 	struct list_head	list;
+	struct list_head	local_list;
 	struct rcu_head		rcu;
 	__be32			rloc;
 	int			priority;
@@ -42,10 +43,11 @@ struct map_table {
 
 /* TODO: split locking for tunnels and maps */
 struct lisp_net {
-	spinlock_t		lock; /* Protects tunnels and maps */
+	spinlock_t		lock; /* Protects tunnels, maps and local_rlocs */
 	struct list_head	tunnels[HASH_SIZE];
 	struct map_table	*maps;
 	struct net_device	*fb_tunnel_dev;	/* Fallback tunnel */
+	struct list_head	local_rlocs;
 };
 
 struct map_config {

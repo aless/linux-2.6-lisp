@@ -1274,7 +1274,7 @@ static struct leaf *trie_leafindex(struct trie *t, int index)
 }
 
 /*
- * Caller must hold RTNL.
+ * Caller must hold table lock.
  */
 int map_table_flush(struct map_table *tb)
 {
