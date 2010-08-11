@@ -1297,12 +1297,12 @@ int map_table_flush(struct map_table *tb)
 	return found;
 }
 
-static int fn_trie_dump_me(t_key key, int plen, struct list_head *fah,
+static int fn_trie_dump_me(t_key key, int plen, struct list_head *meh,
 			   struct map_table *tb, struct genl_family *family,
 			   struct sk_buff *skb, struct netlink_callback *cb)
 {
 	int i, s_i;
-	struct map_entry *fa;
+	struct map_entry *me;
 	__be32 xkey = htonl(key);
 
 	s_i = cb->args[5];
@@ -1310,19 +1310,20 @@ static int fn_trie_dump_me(t_key key, int plen, struct list_head *fah,
 
 	/* rcu_read_lock is hold by caller */
 
-	list_for_each_entry_rcu(fa, fah, list) {
+	list_for_each_entry_rcu(me, meh, list) {
 		if (i < s_i) {
 			i++;
 			continue;
 		}
 
 		if (dump_map(skb, NETLINK_CB(cb->skb).pid,
-				  cb->nlh->nlmsg_seq,
-				  family,
-				  xkey,
-				  plen,
-				  &fa->rlocs,
-				  NLM_F_MULTI) < 0) {
+			     cb->nlh->nlmsg_seq,
+			     family,
+			     xkey,
+			     plen,
+			     &me->rlocs,
+			     me->flags,
+			     NLM_F_MULTI) < 0) {
 			cb->args[5] = i;
 			return -1;
 		}

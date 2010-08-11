@@ -94,6 +94,7 @@ enum {
 	LISP_GNL_ATTR_MAP_RLOC,
 	LISP_GNL_ATTR_MAP_WEIGHT,
 	LISP_GNL_ATTR_MAP_PRIO,
+	LISP_GNL_ATTR_MAP_RLOCF,
 	__LISP_GNL_ATTR_MAP_MAX,
 };
 #define LISP_GNL_ATTR_MAP_MAX (__LISP_GNL_ATTR_MAP_MAX - 1)
@@ -110,6 +111,7 @@ static struct nla_policy lisp_gnl_map_policy[LISP_GNL_ATTR_MAP_MAX + 1] = {
 	[LISP_GNL_ATTR_MAP_RLOC]	= { .type = NLA_U32 },
 	[LISP_GNL_ATTR_MAP_WEIGHT]	= { .type = NLA_U8 },
 	[LISP_GNL_ATTR_MAP_PRIO]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_MAP_RLOCF]	= { .type = NLA_U8 },
 };
 
 /* Commands */

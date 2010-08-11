@@ -72,6 +72,29 @@ static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
 	return NULL;
 }
 
+static struct lisp_tunnel *lisp_tunnel_lookup_dst(struct net *net, u32 remote)
+{
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct net_device *dev;
+	struct lisp_tunnel *tun;
+	int i;
+
+	for (i = 0; i < HASH_SIZE; i++) {
+		list_for_each_entry_rcu(tun, &(lin->tunnels[i]),  list) {
+			if (inet_select_addr(tun->dev, 0, 0) == remote)
+				return tun;
+		};
+	}
+
+	if (inet_select_addr(lin->fb_tunnel_dev, 0, 0) == remote) {
+		dev = lin->fb_tunnel_dev;
+		tun = (struct lisp_tunnel *)netdev_priv(dev);
+		return tun;
+	}
+
+	return NULL;
+}
+
 static void __lisp_tunnel_add(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
 	unsigned h = HASH(tun->parms.iph.saddr);
@@ -336,7 +359,7 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 
 	/* TODO: sanity check */
 	nla_for_each_nested(att, info->attrs[LISP_GNL_ATTR_MAP], cnt) {
-		struct rloc_entry *re;
+		struct rloc_entry *re = NULL;
 
 		switch(nla_type(att)) {
 		case LISP_GNL_ATTR_MAP_EID:
@@ -355,6 +378,8 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 			if (!re)
 				goto out;
 			re->rloc = ntohl(v);
+			re->weight = 0;
+			re->priority = 0;
 			re->flags = LISP_RLOC_F_REACH;
 
 			INIT_RCU_HEAD(&re->rcu);
@@ -362,6 +387,21 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 			INIT_LIST_HEAD(&re->local_list);
 			list_add(&re->list, &mc.mc_rlocs);
 			count++;
+			break;
+		case LISP_GNL_ATTR_MAP_WEIGHT:
+			if (re)
+				re->weight = nla_get_u8(att);
+			break;
+		case LISP_GNL_ATTR_MAP_PRIO:
+			if (re)
+				re->priority = nla_get_u8(att);
+			break;
+		case LISP_GNL_ATTR_MAP_RLOCF:
+			if (re) {
+				re->flags = nla_get_u8(att);
+				re->flags |= LISP_RLOC_F_REACH;
+			}
+			break;
 		}
 	}
 
@@ -381,7 +421,7 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 		/* Local rloc must be the first on the list */
 		re = list_first_entry_rcu(&mc.mc_rlocs,
 					  struct rloc_entry, list);
-		tun = lisp_tunnel_lookup(net, re->rloc);
+		tun = lisp_tunnel_lookup_dst(net, htonl(re->rloc));
 		if (tun) {
 			spin_lock_bh(&lin->lock);
 			list_add_tail_rcu(&re->local_list, &lin->local_rlocs);
