@@ -52,21 +52,21 @@ static void lisp_dev_setup(struct net_device *dev);
 
 static int lisp_net_id __read_mostly;
 
-static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 remote)
+static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 local)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct net_device *dev;
 	struct lisp_tunnel *tun;
-	unsigned h = HASH(remote);
+	unsigned h = HASH(local);
 
 	list_for_each_entry_rcu(tun, &(lin->tunnels[h]),  list) {
-		if (inet_select_addr(tun->dev, 0, 0) == remote)
+		if (tun->parms.iph.saddr == local)
 			return tun;
 	};
 
 	dev = lin->fb_tunnel_dev;
 	tun = (struct lisp_tunnel *)netdev_priv(dev);
-	if (tun->parms.iph.saddr == remote)
+	if (tun->parms.iph.saddr == local)
 		return tun;
 
 	return NULL;
@@ -95,39 +95,81 @@ static struct lisp_tunnel *lisp_tunnel_lookup_dst(struct net *net, u32 remote)
 	return NULL;
 }
 
-static void __lisp_tunnel_add(struct lisp_net *lin, struct lisp_tunnel *tun)
+static void __lisp_tunnel_link(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
 	unsigned h = HASH(tun->parms.iph.saddr);
 
 	list_add_tail_rcu(&tun->list, &lin->tunnels[h]);
-
 }
 
-static void lisp_tunnel_add(struct lisp_net *lin, struct lisp_tunnel *tun)
+static void lisp_tunnel_link(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
-	pr_debug("LISP: register tunnel: %s\n", tun->dev->name);
-
 	spin_lock_bh(&lin->lock);
-	__lisp_tunnel_add(lin, tun);
+	__lisp_tunnel_link(lin, tun);
 	spin_unlock_bh(&lin->lock);
 }
 
-static void __lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
+static void __lisp_tunnel_unlink(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
 	list_del_rcu(&tun->list);
 }
 
-static void lisp_tunnel_del(struct lisp_net *lin, struct lisp_tunnel *tun)
+static void lisp_tunnel_unlink(struct lisp_net *lin, struct lisp_tunnel *tun)
 {
-	//__be32 addr = inet_select_addr(tun->dev, 0, 0);
-
-	pr_debug("LISP: unregister tunnel: %s\n", tun->dev->name);
-
 	/* TODO: remove local rloc mapings */
 
 	spin_lock_bh(&lin->lock);
-	__lisp_tunnel_del(lin, tun);
+	__lisp_tunnel_unlink(lin, tun);
 	spin_unlock_bh(&lin->lock);
+}
+
+static struct lisp_tunnel *lisp_tunnel_locate(struct net *net,
+					      struct ip_tunnel_parm *parms,
+					      int create)
+{
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct lisp_tunnel *tun;
+	u32 local = parms->iph.saddr;
+	struct net_device *dev;
+	char name[IFNAMSIZ];
+	int err;
+
+	tun = lisp_tunnel_lookup(net, local);
+	if (tun)
+		return tun;
+	if (!create)
+		return NULL;
+
+	if (parms->name[0])
+		strlcpy(name, parms->name, IFNAMSIZ);
+	else
+		sprintf(name, "lisp%%d");
+
+	dev = alloc_netdev(sizeof(struct lisp_tunnel), name, lisp_dev_setup);
+	if (dev == NULL)
+		return NULL;
+
+	dev_net_set(dev, net);
+
+	if (strchr(name, '%')) {
+		if (dev_alloc_name(dev, name) < 0)
+			goto failed_free;
+	}
+
+	tun = netdev_priv(dev);
+	tun->dev = dev;
+	memcpy(&tun->parms, parms, sizeof(*parms));
+
+	err = register_netdevice(dev);
+	if (err < 0)
+		goto failed_free;
+
+	lisp_tunnel_link(lin, tun);
+	return tun;
+
+failed_free:
+	free_netdev(dev);
+	return NULL;
 }
 
 static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
@@ -213,7 +255,6 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 	struct ip_tunnel_parm parms;
 	struct lisp_tunnel *tun;
 	struct net *net = dev_net(dev);
-	char name[IFNAMSIZ];
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 
 	switch (cmd) {
@@ -240,6 +281,7 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		break;
 
 	case SIOCADDTUNNEL:
+	case SIOCCHGTUNNEL:
 		err = -EPERM;
 		if (!capable(CAP_NET_ADMIN))
 			goto done;
@@ -255,42 +297,36 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 			goto done;
 
 		rcu_read_lock();
-		tun = lisp_tunnel_lookup(net, parms.iph.saddr);
+		tun = lisp_tunnel_locate(net, &parms, cmd == SIOCADDTUNNEL);
 		rcu_read_unlock();
 
-		if (tun) {
-			err = -EEXIST;
-			goto done;
-		} else {
-			if (parms.name[0])
-				strlcpy(name, parms.name, IFNAMSIZ);
-			else
-				sprintf(name, "lisp%%d");
-
-			dev = alloc_netdev(sizeof(struct lisp_tunnel), name,
-					   lisp_dev_setup);
-			dev_net_set(dev, net);
-
-			if (strchr(name, '%')) {
-				if (dev_alloc_name(dev, name) < 0)
-					goto add_err;
+		if (dev != lin->fb_tunnel_dev && cmd == SIOCCHGTUNNEL) {
+			if (tun != NULL) {
+				if (tun->dev != dev) {
+					err = -EEXIST;
+					break;
+				}
+			} else {
+				tun = netdev_priv(dev);
+				lisp_tunnel_unlink(lin, tun);
+				tun->parms.iph.saddr = parms.iph.saddr;
+				memcpy(dev->dev_addr, &parms.iph.saddr, 4);
+				lisp_tunnel_link(lin, tun);
+				netdev_state_change(dev);
 			}
-			tun = netdev_priv(dev);
-			tun->dev = dev;
-			memcpy(&(tun->parms), &parms, sizeof(parms));
-
-			err = -EFAULT;
-			if (copy_to_user(ifr->ifr_ifru.ifru_data, &parms,
-						sizeof(parms)))
-				goto add_err;
-
-			err = register_netdevice(dev);
-			if (err < 0)
-				goto add_err;
-
-			lisp_tunnel_add(lin, tun);
 		}
-		err = 0;
+
+		if (tun) {
+			err = 0;
+			if (cmd == SIOCCHGTUNNEL) {
+				tun->parms.iph.ttl = parms.iph.ttl;
+				tun->parms.iph.tos = parms.iph.tos;
+				}
+			if (copy_to_user(ifr->ifr_ifru.ifru_data, &tun->parms,
+					 sizeof(parms)))
+				err = -EFAULT;
+		} else
+			err = (cmd == SIOCADDTUNNEL ? -ENOBUFS : -ENOENT);
 		break;
 
 	case SIOCDELTUNNEL:
@@ -313,7 +349,7 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		} else
 			tun = netdev_priv(dev);
 
-		lisp_tunnel_del(lin, tun);
+		lisp_tunnel_unlink(lin, tun);
 
 		unregister_netdevice(dev);
 		err = 0;
@@ -325,9 +361,6 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 
 done:
 	return err;
-add_err:
-	free_netdev(dev);
-	goto done;
 }
 
 /*****************************************************************************
