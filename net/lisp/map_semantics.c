@@ -125,6 +125,7 @@ int map_semantic_match(struct list_head *head, const struct flowi *flp,
 
 out_fill_res:
 	res->prefixlen = prefixlen;
+	res->map = me;
 	res->rloc = re;
 	return 0;
 }

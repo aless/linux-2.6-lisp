@@ -1457,9 +1457,9 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 			goto err;
 
 		new_me->flags = cfg->mc_map_flags;
-		//INIT_LIST_HEAD(&new_me->rlocs);
+		INIT_LIST_HEAD(&new_me->rlocs);
 		INIT_RCU_HEAD(&new_me->rcu);
-		list_replace(&cfg->mc_rlocs, &new_me->rlocs);
+		list_add_rcu(&cfg->mc_rloc->list, &new_me->rlocs);
 
 		atomic_set(&new_me->rloc_cnt, cfg->mc_rloc_cnt);
 

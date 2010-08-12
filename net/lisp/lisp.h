@@ -53,13 +53,14 @@ struct lisp_net {
 struct map_config {
 	u8			mc_dst_len;
 	__be32			mc_dst;
-	struct list_head	mc_rlocs;
+	struct rloc_entry	*mc_rloc;
 	int			mc_rloc_cnt;
 	unsigned char		mc_map_flags;
 };
 
 struct map_result {
 	unsigned char		prefixlen;
+	struct map_entry	*map;
 	struct rloc_entry	*rloc;
 };
 
