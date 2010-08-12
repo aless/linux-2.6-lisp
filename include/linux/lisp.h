@@ -68,7 +68,7 @@ struct lisphdr {
 		__be32	lsb;
 		struct {
 			__u32	instance_id:24,
-				lsb:8;
+				slsb:8;
 		};
 	};
 };

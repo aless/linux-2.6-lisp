@@ -737,6 +737,32 @@ static const struct net_proto_family lisp_proto_family = {
 /*****************************************************************************
  * LISP net device
  *****************************************************************************/
+static void lisp_fill_hdr(struct net* net, struct sk_buff *skb)
+{
+	struct lisphdr *lh;
+	struct rloc_entry *rloc;
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	int pos = 0;
+	u32 lsb = 0;
+
+	lh = (struct lisphdr *)skb_transport_header(skb);
+	memset(lh, 0, sizeof(struct lisphdr));
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(rloc, &lin->local_rlocs, local_list) {
+		if (rloc->flags&LISP_RLOC_F_REACH)
+			lsb |= 1 << pos;
+		pos++;
+		if (pos > 31)
+			break;
+	}
+
+	rcu_read_unlock();
+
+	lh->lsb_enable = 1;
+	lh->lsb = htonl(lsb);
+}
 
 static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 {
@@ -750,7 +776,6 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct iphdr *old_iph = ip_hdr(skb);
 	struct iphdr *iph;
 	struct udphdr *uh;
-	struct lisphdr *lh;
 	__be32 dst;
 	unsigned int max_headroom;
 	int data_len = skb->len;
@@ -811,8 +836,7 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* LISP header */
 	skb_push(skb, sizeof(struct lisphdr));
 	skb_reset_transport_header(skb);
-	lh = lisp_hdr(skb);
-	/* TODO: fill LISP header */
+	lisp_fill_hdr(net, skb);
 
 	/* UDP header */
 	skb_push(skb, sizeof(struct udphdr));
