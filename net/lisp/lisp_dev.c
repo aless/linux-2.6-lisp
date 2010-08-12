@@ -394,20 +394,13 @@ static struct genl_family lisp_gnl_family = {
 	.maxattr = LISP_GNL_ATTR_MAX,
 };
 
-static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
+static int lisp_parse_gnlparms(struct genl_info *info, struct map_config *cfg)
 {
-	struct net *net = genl_info_net(info);
-	struct lisp_net *lin = net_generic(net, lisp_net_id);
-	struct map_config mc;
 	struct rloc_entry *re = NULL;
-	struct map_result mr;
-	struct lisp_tunnel *tun;
-	struct flowi fl;
 	struct nlattr *att;
 	int cnt, err;
 
 	err = -ENOMEM;
-
 	re = kmalloc(sizeof(struct rloc_entry), GFP_KERNEL);
 	if (!re)
 		goto out;
@@ -416,16 +409,16 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 	INIT_LIST_HEAD(&re->local_list);
 	re->weight = 0;
 	re->priority = 0;
-	mc.mc_rloc = re;
+	cfg->mc_rloc = re;
 
 	/* TODO: sanity check */
 	nla_for_each_nested(att, info->attrs[LISP_GNL_ATTR_MAP], cnt) {
 		switch(nla_type(att)) {
 		case LISP_GNL_ATTR_MAP_EID:
-			mc.mc_dst = nla_get_u32(att);
+			cfg->mc_dst = nla_get_u32(att);
 			break;
 		case LISP_GNL_ATTR_MAP_EIDLEN:
-			mc.mc_dst_len = nla_get_u8(att);
+			cfg->mc_dst_len = nla_get_u8(att);
 			break;
 		case LISP_GNL_ATTR_MAP_RLOC:
 			re->rloc = ntohl(nla_get_u32(att));
@@ -444,8 +437,27 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 		}
 	}
 
-	mc.mc_rloc_cnt = 1;
-	mc.mc_map_flags = nla_get_u8(info->attrs[LISP_GNL_ATTR_MAPF]);
+	cfg->mc_rloc_cnt = 1;
+	cfg->mc_map_flags = nla_get_u8(info->attrs[LISP_GNL_ATTR_MAPF]);
+
+	return 0;
+out:
+	return err;
+}
+
+static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
+{
+	struct net *net = genl_info_net(info);
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct map_config mc;
+	struct map_result mr;
+	struct lisp_tunnel *tun;
+	struct flowi fl;
+	int err;
+
+	err = lisp_parse_gnlparms(info, &mc);
+	if (err)
+		goto out;
 
 	/* The mappings added manually are assumed to be usable
 	   and rechable until verification */
