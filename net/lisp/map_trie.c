@@ -1481,6 +1481,68 @@ err:
 	return err;
 }
 
+/*
+ * Caller must hold table lock.
+ */
+int map_table_delete(struct map_table *tb, struct map_config *cfg)
+{
+	struct trie *t = (struct trie *) tb->tb_data;
+	u32 key, mask;
+	int plen = cfg->mc_dst_len;
+	struct map_entry *fa, *fa_to_delete;
+	struct list_head *fa_head;
+	struct leaf *l;
+	struct leaf_info *li;
+
+	if (plen > 32)
+		return -EINVAL;
+
+	key = ntohl(cfg->mc_dst);
+	mask = ntohl(inet_make_mask(plen));
+
+	if (key & ~mask)
+		return -EINVAL;
+
+	key = key & mask;
+	l = trie_find_node(t, key);
+
+	if (!l)
+		return -ESRCH;
+
+	fa_head = get_fa_head(l, plen);
+	fa = map_find(fa_head);
+
+	if (!fa)
+		return -ESRCH;
+
+	pr_debug("Deleting %08x/%d t=%p\n", key, plen, t);
+
+	fa_to_delete = fa;
+
+	if (!fa_to_delete)
+		return -ESRCH;
+
+	fa = fa_to_delete;
+
+	l = trie_find_node(t, key);
+	li = find_leaf_info(l, plen);
+
+	list_del_rcu(&fa->list);
+
+	if (list_empty(fa_head)) {
+		hlist_del_rcu(&li->hlist);
+		free_leaf_info(li);
+	}
+
+	if (hlist_empty(&l->list))
+		trie_leaf_remove(t, l);
+
+	release_map(fa);
+	map_free_mem_rcu(fa);
+
+	return 0;
+}
+
 int map_table_lookup(struct map_table *tb, const struct flowi *flp,
 		     struct map_result *res)
 {

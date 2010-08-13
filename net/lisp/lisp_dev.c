@@ -41,6 +41,7 @@
 extern void map_hash_init(void);
 extern struct map_table *map_hash_table(void);
 extern int map_table_insert(struct map_table *tb, struct map_config *cfg);
+extern int map_table_delete(struct map_table *tb, struct map_config *cfg);
 extern int map_table_lookup(struct map_table *tb, const struct flowi *flp,
 			    struct map_result *res);
 extern int map_table_flush(struct map_table *tb);
@@ -459,6 +460,9 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 	if (err)
 		goto out;
 
+	pr_debug("LISP: add map eid:%x/%d rloc:%x\n", mc.mc_dst,
+		 mc.mc_dst_len, mc.mc_rloc->rloc);
+
 	/* The mappings added manually are assumed to be usable
 	   and rechable until verification */
 	mc.mc_map_flags |= LISP_MAP_F_STATIC | LISP_MAP_F_UP;
@@ -496,6 +500,41 @@ static struct genl_ops lisp_gnl_ops_addmap = {
 	.flags = GENL_ADMIN_PERM,
 	.policy = lisp_gnl_policy,
 	.doit = lisp_gnl_doit_addmap,
+	.dumpit = NULL,
+};
+
+static int lisp_gnl_doit_delmap(struct sk_buff *skb, struct genl_info *info)
+{
+	struct net *net = genl_info_net(info);
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct map_config cfg;
+	int err;
+
+	err = lisp_parse_gnlparms(info, &cfg);
+	if (err)
+		goto out;
+
+	pr_debug("LISP: del map eid:%x/%d rloc:%x\n", cfg.mc_dst,
+		 cfg.mc_dst_len, cfg.mc_rloc->rloc);
+
+	err = -EINVAL;
+	if (cfg.mc_dst == 0 || cfg.mc_dst_len == 0)
+		goto out;
+
+	cfg.mc_dst = cfg.mc_dst;
+	cfg.mc_dst_len = cfg.mc_dst_len;
+	rcu_read_lock();
+	err = map_table_delete(lin->maps, &cfg);
+	rcu_read_unlock();
+out:
+	return err;
+}
+
+static struct genl_ops lisp_gnl_ops_delmap = {
+	.cmd = LISP_GNL_CMD_DELMAP,
+	.flags = GENL_ADMIN_PERM,
+	.policy = lisp_gnl_policy,
+	.doit = lisp_gnl_doit_delmap,
 	.dumpit = NULL,
 };
 
@@ -1067,6 +1106,10 @@ static int __init lisp_init(void)
 		goto out_unregister_sock;
 
 	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_addmap);
+	if (err)
+		goto out_unregister_nl;
+
+	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_delmap);
 	if (err)
 		goto out_unregister_nl;
 
