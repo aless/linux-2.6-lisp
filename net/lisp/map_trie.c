@@ -1489,7 +1489,7 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 	struct trie *t = (struct trie *) tb->tb_data;
 	u32 key, mask;
 	int plen = cfg->mc_dst_len;
-	struct map_entry *fa, *fa_to_delete;
+	struct map_entry *fa;
 	struct list_head *fa_head;
 	struct leaf *l;
 	struct leaf_info *li;
@@ -1515,14 +1515,12 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 	if (!fa)
 		return -ESRCH;
 
+	if (cfg->mc_rloc) {
+		if (cfg->mc_rloc->rloc)
+			return release_rloc(fa, cfg);
+	}
+
 	pr_debug("Deleting %08x/%d t=%p\n", key, plen, t);
-
-	fa_to_delete = fa;
-
-	if (!fa_to_delete)
-		return -ESRCH;
-
-	fa = fa_to_delete;
 
 	l = trie_find_node(t, key);
 	li = find_leaf_info(l, plen);

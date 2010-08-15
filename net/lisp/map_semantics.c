@@ -57,7 +57,7 @@ struct map_entry *map_find(struct list_head *meh)
 	return NULL;
 }
 
-struct rloc_entry *rloc_find(struct list_head *reh, const struct flowi *fl)
+struct rloc_entry *rloc_find_rechable(struct list_head *reh, const struct flowi *fl)
 {
 	int hash;
 	int count = 0;
@@ -150,7 +150,7 @@ int map_semantic_match(struct list_head *head, const struct flowi *flp,
 		me = map_find(head);
 		if (!me)
 			goto fail;
-		re = rloc_find(&me->rlocs, flp);
+		re = rloc_find_rechable(&me->rlocs, flp);
 		if (!re)
 			goto fail;
 
@@ -196,4 +196,20 @@ int release_map(struct map_entry *map)
 		}
 	}
 	return found;
+}
+
+int release_rloc(struct map_entry *map, struct map_config *cfg)
+{
+	struct rloc_entry *re = NULL;
+
+	list_for_each_entry(re, &map->rlocs, list) {
+		if (re->rloc == cfg->mc_rloc->rloc) {
+			list_del_rcu(&re->list);
+			rloc_free_mem_rcu(re);
+			return 0;
+		}
+	}
+
+	BUG_ON(!re);
+	return -ESRCH;
 }
