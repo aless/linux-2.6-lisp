@@ -856,7 +856,7 @@ nomem:
 }
 
 /* readside must use rcu_read_lock currently dump routines
- via get_fa_head and dump */
+ via get_me_head and dump */
 
 static struct leaf_info *find_leaf_info(struct leaf *l, int plen)
 {
@@ -871,7 +871,7 @@ static struct leaf_info *find_leaf_info(struct leaf *l, int plen)
 	return NULL;
 }
 
-static inline struct list_head *get_fa_head(struct leaf *l, int plen)
+static inline struct list_head *get_me_head(struct leaf *l, int plen)
 {
 	struct leaf_info *li = find_leaf_info(l, plen);
 
@@ -981,7 +981,7 @@ static struct list_head *trie_insert_node(struct trie *t, u32 key, int plen)
 	struct node *n;
 	struct leaf *l;
 	int missbit;
-	struct list_head *fa_head = NULL;
+	struct list_head *me_head = NULL;
 	struct leaf_info *li;
 	t_key cindex;
 
@@ -1041,7 +1041,7 @@ static struct list_head *trie_insert_node(struct trie *t, u32 key, int plen)
 		if (!li)
 			return NULL;
 
-		fa_head = &li->datalh;
+		me_head = &li->datalh;
 		insert_leaf_info(&l->list, li);
 		goto done;
 	}
@@ -1058,7 +1058,7 @@ static struct list_head *trie_insert_node(struct trie *t, u32 key, int plen)
 		return NULL;
 	}
 
-	fa_head = &li->datalh;
+	me_head = &li->datalh;
 	insert_leaf_info(&l->list, li);
 
 	if (t->trie && n == NULL) {
@@ -1119,7 +1119,7 @@ static struct list_head *trie_insert_node(struct trie *t, u32 key, int plen)
 
 	trie_rebalance(t, tp);
 done:
-	return fa_head;
+	return me_head;
 }
 
 
@@ -1438,7 +1438,7 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 	me = NULL;
 
 	if (l) {
-		me_head = get_fa_head(l, plen);
+		me_head = get_me_head(l, plen);
 		me = map_find(me_head);
 	}
 
@@ -1483,8 +1483,8 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 	struct trie *t = (struct trie *) tb->tb_data;
 	u32 key, mask;
 	int plen = cfg->mc_dst_len;
-	struct map_entry *fa;
-	struct list_head *fa_head;
+	struct map_entry *me;
+	struct list_head *me_head;
 	struct leaf *l;
 	struct leaf_info *li;
 
@@ -1503,15 +1503,15 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 	if (!l)
 		return -ESRCH;
 
-	fa_head = get_fa_head(l, plen);
-	fa = map_find(fa_head);
+	me_head = get_me_head(l, plen);
+	me = map_find(me_head);
 
-	if (!fa)
+	if (!me)
 		return -ESRCH;
 
 	if (cfg->mc_rloc) {
 		if (cfg->mc_rloc->rloc)
-			return release_rloc(fa, cfg);
+			return release_rloc(me, cfg);
 	}
 
 	pr_debug("Deleting %08x/%d t=%p\n", key, plen, t);
@@ -1519,9 +1519,9 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 	l = trie_find_node(t, key);
 	li = find_leaf_info(l, plen);
 
-	list_del_rcu(&fa->list);
+	list_del_rcu(&me->list);
 
-	if (list_empty(fa_head)) {
+	if (list_empty(me_head)) {
 		hlist_del_rcu(&li->hlist);
 		free_leaf_info(li);
 	}
@@ -1529,8 +1529,8 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 	if (hlist_empty(&l->list))
 		trie_leaf_remove(t, l);
 
-	release_map(fa);
-	map_free_mem_rcu(fa);
+	release_map(me);
+	map_free_mem_rcu(me);
 
 	return 0;
 }
