@@ -74,7 +74,7 @@ static struct lisp_tunnel *lisp_tunnel_lookup(struct net *net, u32 local)
 	return NULL;
 }
 
-static struct lisp_tunnel *lisp_tunnel_lookup_dst(struct net *net, u32 remote)
+static struct lisp_tunnel *lisp_tunnel_lookup_dst(struct net *net, u32 local)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct net_device *dev;
@@ -83,12 +83,12 @@ static struct lisp_tunnel *lisp_tunnel_lookup_dst(struct net *net, u32 remote)
 
 	for (i = 0; i < HASH_SIZE; i++) {
 		list_for_each_entry_rcu(tun, &(lin->tunnels[i]),  list) {
-			if (inet_select_addr(tun->dev, 0, 0) == remote)
+			if (inet_select_addr(tun->dev, 0, 0) == local)
 				return tun;
 		};
 	}
 
-	if (inet_select_addr(lin->fb_tunnel_dev, 0, 0) == remote) {
+	if (inet_select_addr(lin->fb_tunnel_dev, 0, 0) == local) {
 		dev = lin->fb_tunnel_dev;
 		tun = (struct lisp_tunnel *)netdev_priv(dev);
 		return tun;
@@ -685,11 +685,9 @@ int lisp_udp_encap_rcv(struct sock *sk, struct sk_buff *skb)
 
 	rcu_read_lock();
 
-	tun = lisp_tunnel_lookup(dev_net(skb->dev), iph->daddr);
+	tun = lisp_tunnel_lookup_dst(dev_net(skb->dev), iph->daddr);
 	if (tun == NULL)
 		goto drop;
-
-	/*TODO: local map lookup*/
 
 	secpath_reset(skb);
 	skb_pull(skb, sizeof(struct lisphdr) + sizeof(struct udphdr));
