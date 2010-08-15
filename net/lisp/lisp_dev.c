@@ -35,6 +35,7 @@
 #include <net/netlink.h>
 #include <net/genetlink.h>
 #include <linux/inetdevice.h>
+#include <net/inet_ecn.h>
 
 #include "lisp.h"
 
@@ -833,6 +834,8 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct netdev_queue *txq = netdev_get_tx_queue(dev, 0);
 	struct net *net = dev_net(dev);
 	struct iphdr *tiph = &tun->parms.iph;
+	u8     tos = tun->parms.iph.tos;
+	__be16 df = tiph->frag_off;
 	struct iphdr *old_iph = ip_hdr(skb);
 	struct iphdr *iph;
 	struct udphdr *uh;
@@ -843,6 +846,12 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	__wsum csum;
 	int lisp_hlen = sizeof(struct iphdr) + sizeof(struct udphdr) +
 		sizeof(struct lisphdr);
+
+	if (skb->protocol != htons(ETH_P_IP))
+		goto tx_error;
+
+	if (tos&1)
+		tos = old_iph->tos;
 
 	pr_debug("LISP: transmitting %d bytes\n", skb->len);
 
@@ -872,6 +881,8 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 		stats->collisions++;
 		goto tx_error;
 	}
+
+	df |= old_iph->frag_off & htons(IP_DF);
 
 	max_headroom = LL_RESERVED_SPACE(tdev) + lisp_hlen;
 
@@ -920,10 +931,11 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb_dst_drop(skb);
 	skb_dst_set(skb, &rt->u.dst);
 
-	/* TODO: set frag_off, tos */
 	iph		=	ip_hdr(skb);
 	iph->version	=	4;
 	iph->ihl	=	sizeof(struct iphdr) >> 2;
+	iph->frag_off	=	df;
+	iph->tos	=	INET_ECN_encapsulate(tos, old_iph->tos);
 	iph->protocol	=	IPPROTO_UDP;
 	iph->daddr	=	rt->rt_dst;
 	iph->saddr	=	rt->rt_src;
