@@ -1078,17 +1078,15 @@ static void __net_exit lisp_exit_net(struct net *net)
 	spin_lock_bh(&lin->lock);
 	rcu_read_lock();
 	res = map_table_flush(lin->maps);
-	rcu_read_unlock();
-	printk(KERN_INFO "flush: %d\n", res);
+	pr_debug("flush: %d entries\n", res);
 	spin_unlock_bh(&lin->lock);
 
 	rtnl_lock();
-	rcu_read_lock();
 	lisp_destroy_tunnels(lin, &list);
 	unregister_netdevice_queue(lin->fb_tunnel_dev, &list);
 	unregister_netdevice_many(&list);
-	rcu_read_unlock();
 	rtnl_unlock();
+	rcu_read_unlock();
 }
 
 static struct pernet_operations lisp_net_ops = {

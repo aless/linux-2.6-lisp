@@ -154,8 +154,6 @@ int map_semantic_match(struct list_head *head, const struct flowi *flp,
 		if (!re)
 			goto fail;
 
-		printk(KERN_INFO "%s match rloc:%x\n", __func__, htonl(re->rloc));
-
 		goto out_fill_res;
 	}
 
@@ -187,7 +185,6 @@ int release_map(struct map_entry *map)
 
 	if (cnt > 0) {
 		list_for_each_entry_safe(rloc, rtmp, &map->rlocs, list) {
-			printk(KERN_INFO "%s rloc:%x (%p)\n", __func__, htonl(rloc->rloc), rloc);
 			list_del_rcu(&rloc->list);
 			if (!list_empty(&rloc->local_list))
 				list_del_rcu(&rloc->local_list);

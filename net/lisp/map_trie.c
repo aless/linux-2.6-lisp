@@ -916,7 +916,6 @@ trie_find_node(struct trie *t, u32 key)
 				  rcu_read_lock_held() ||
 				  lockdep_rtnl_is_held());
 
-	printk(KERN_INFO "%s trie: %p\n", __func__, n);
 	while (n != NULL &&  NODE_TYPE(n) == T_TNODE) {
 		tn = (struct tnode *) n;
 
@@ -1176,7 +1175,6 @@ static int trie_flush_list(struct list_head *head)
 	int found = 0;
 
 	list_for_each_entry_safe(me, me_node, head, list) {
-		printk(KERN_INFO "%s map:(%p)\n", __func__, me);
 		found += release_map(me);
 		list_del_rcu(&me->list);
 		map_free_mem_rcu(me);
@@ -1192,7 +1190,6 @@ static int trie_flush_leaf(struct leaf *l)
 	struct leaf_info *li = NULL;
 
 	hlist_for_each_entry_safe(li, node, tmp, lih, hlist) {
-		printk(KERN_INFO "%s lilen:%d (%p)\n", __func__, li->plen, li);
 		found += trie_flush_list(&li->datalh);
 
 		if (list_empty(&li->datalh)) {
@@ -1429,7 +1426,6 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 	key = ntohl(cfg->mc_dst);
 
 	pr_debug("Insert table %08x/%d\n", key, plen);
-	printk(KERN_INFO "%s %08x/%d\n", __func__, key, plen);
 
 	mask = ntohl(inet_make_mask(plen));
 
@@ -1470,8 +1466,6 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 		}
 
 		list_add_rcu(&new_me->list, me_head);
-
-		printk(KERN_INFO "%s maphead:%p newmaplist:%p\n", __func__, me_head, &new_me->list);
 	}
 
 	return 0;
@@ -1566,7 +1560,6 @@ int map_table_lookup(struct map_table *tb, const struct flowi *flp,
 	/* Just a leaf? */
 	if (IS_LEAF(n)) {
 		ret = check_leaf(t, (struct leaf *)n, key, flp, res);
-		printk(KERN_INFO "%s just a leaf %d\n", __func__, ret);
 		goto found;
 	}
 
@@ -1591,7 +1584,6 @@ int map_table_lookup(struct map_table *tb, const struct flowi *flp,
 			ret = check_leaf(t, (struct leaf *)n, key, flp, res);
 			if (ret > 0)
 				goto backtrace;
-			printk(KERN_INFO "%s mark2 normal %d\n", __func__, ret);
 			goto found;
 		}
 
@@ -1745,8 +1737,6 @@ void map_hash_init(void)
 					   0, SLAB_PANIC, NULL);
 }
 
-
-/* Fix more generic FIB names for init later */
 struct map_table *map_hash_table(void)
 {
 	struct map_table *tb;
