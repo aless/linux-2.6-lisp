@@ -174,16 +174,13 @@ failed_free:
 	return NULL;
 }
 
-static __be32 lisp_rloc_lookup(struct net *net, __be32 eid)
+static __be32 lisp_rloc_lookup(struct net *net, struct flowi *fl)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_result mr;
-	struct flowi fl;
 	int res;
 
-	fl.fl4_dst = htonl(eid);
-
-	res = map_table_lookup(lin->maps, &fl, &mr);
+	res = map_table_lookup(lin->maps, fl, &mr);
 	if (res != 1)
 		return mr.rloc->rloc;
 	else
@@ -855,12 +852,20 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	pr_debug("LISP: transmitting %d bytes\n", skb->len);
 
-	rcu_read_lock();
-	dst = htonl(lisp_rloc_lookup(net, ntohl(old_iph->daddr)));
-	rcu_read_unlock();
-	if (dst == 0)
-		/* TODO: send a Map-Request (and packet cache?) */
-		goto tx_drop;
+	{
+		struct flowi fl = { .oif = 0,
+				    .nl_u = { .ip4_u =
+					      { .daddr = old_iph->daddr,
+						.saddr = old_iph->saddr} },
+				    .proto = old_iph->protocol };
+
+		rcu_read_lock();
+		dst = htonl(lisp_rloc_lookup(net, &fl));
+		rcu_read_unlock();
+		if (dst == 0)
+			/* TODO: send a Map-Request (and packet cache?) */
+			goto tx_drop;
+	}
 
 	{
 		struct flowi fl = { .oif = 0,

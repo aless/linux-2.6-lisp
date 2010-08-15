@@ -57,10 +57,43 @@ struct map_entry *map_find(struct list_head *meh)
 	return NULL;
 }
 
-struct rloc_entry *rloc_find(struct list_head *reh)
+struct rloc_entry *rloc_find(struct list_head *reh, const struct flowi *fl)
 {
-	if (reh)
-		return list_first_entry_rcu(reh, struct rloc_entry, list);
+	int hash;
+	int count = 0;
+	int prio = -1;
+	struct rloc_entry *re, *re_reach = NULL;
+
+	if (!reh)
+		goto rloc_noreachable;
+
+	list_for_each_entry_rcu(re, reh, list) {
+		if (re->flags&LISP_RLOC_F_REACH) {
+			if (prio == -1) {
+				prio = re->priority;
+				re_reach = re;
+			} else {
+				if (re->priority > prio)
+					break;
+			}
+			count++;
+		}
+	}
+
+	if (!count)
+		goto rloc_noreachable;
+
+	hash = (fl->nl_u.ip4_u.saddr + fl->nl_u.ip4_u.daddr) % count;
+	count = 0;
+
+	re_reach = list_entry(re_reach->list.prev, struct rloc_entry, list);
+	list_for_each_entry_continue(re_reach, reh, list) {
+		if (count == hash)
+			return re_reach;
+		count++;
+	}
+
+rloc_noreachable:
 	return NULL;
 }
 
@@ -115,14 +148,19 @@ int map_semantic_match(struct list_head *head, const struct flowi *flp,
 	if (head)
 	{
 		me = map_find(head);
-		re = rloc_find(&me->rlocs);
+		if (!me)
+			goto fail;
+		re = rloc_find(&me->rlocs, flp);
+		if (!re)
+			goto fail;
 
 		printk(KERN_INFO "%s match rloc:%x\n", __func__, htonl(re->rloc));
+
 		goto out_fill_res;
 	}
-	else
-		return 1;
 
+fail:
+	return 1;
 out_fill_res:
 	res->prefixlen = prefixlen;
 	res->map = me;
