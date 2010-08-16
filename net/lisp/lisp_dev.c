@@ -38,16 +38,7 @@
 #include <net/inet_ecn.h>
 
 #include "lisp.h"
-
-extern void map_hash_init(void);
-extern struct map_table *map_hash_table(void);
-extern int map_table_insert(struct map_table *tb, struct map_config *cfg);
-extern int map_table_delete(struct map_table *tb, struct map_config *cfg);
-extern int map_table_lookup(struct map_table *tb, const struct flowi *flp,
-			    struct map_result *res);
-extern int map_table_flush(struct map_table *tb);
-extern int map_table_dump(struct map_table *tb, struct genl_family *family,
-			  struct sk_buff *skb, struct netlink_callback *cb);
+#include "map_trie.h"
 
 static void lisp_dev_setup(struct net_device *dev);
 
@@ -243,28 +234,6 @@ static void lisp_map_del(struct lisp_net *lin, struct map_entry *map)
 	spin_unlock_bh(&lin->lock);
 }
 
-/*
-static void lisp_map_del_local(struct lisp_net *lin, __be32 rloc)
-{
-	struct map_entry *map;
-	struct rloc_entry *rloc_ent;
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(map, &(lin->maps),  list) {
-		if (atomic_read(&map->rloc_cnt) > 0) {
-			rloc_ent = list_first_entry_rcu(&map->rlocs,
-						   struct rloc_entry, list);
-			if (rloc_ent->rloc == rloc)
-				lisp_map_del(lin, map);
-		}
-	};
-	rcu_read_unlock();
-}
-*/
-
-
-
-
 static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 		int cmd)
 {
@@ -367,6 +336,8 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 			tun = netdev_priv(dev);
 
 		lisp_tunnel_unlink(lin, tun);
+
+		/* TODO: unset local flag in local mapping */
 
 		unregister_netdevice(dev);
 		err = 0;
@@ -983,11 +954,6 @@ tx_drop:
 	return NETDEV_TX_OK;
 }
 
-static void lisp_tunnel_uninit(struct net_device *dev)
-{
-	dev_put(dev);
-}
-
 /* called by register_netdev */
 static int lisp_tunnel_init(struct net_device *dev)
 {
@@ -996,7 +962,6 @@ static int lisp_tunnel_init(struct net_device *dev)
 	tun->dev = dev;
 	strcpy(tun->parms.name, dev->name);
 	memcpy(dev->dev_addr, &tun->parms.iph.saddr, 4);
-	dev_hold(dev);
 
 	return 0;
 }
@@ -1005,7 +970,6 @@ static const struct net_device_ops lisp_netdev_ops = {
 	.ndo_start_xmit		= lisp_tunnel_xmit,
 	.ndo_do_ioctl		= lisp_tunnel_ioctl,
 	.ndo_init		= lisp_tunnel_init,
-	.ndo_uninit		= lisp_tunnel_uninit,
 };
 
 static void lisp_dev_setup(struct net_device *dev)
@@ -1066,7 +1030,6 @@ static void lisp_destroy_tunnels(struct lisp_net *lin, struct list_head *list)
 			unregister_netdevice_queue(tun->dev, list);
 		};
 	};
-
 }
 
 static void __net_exit lisp_exit_net(struct net *net)
