@@ -409,6 +409,7 @@ static int lisp_parse_gnlparms(struct genl_info *info, struct map_config *cfg)
 
 	cfg->mc_rloc_cnt = 1;
 	cfg->mc_map_flags = nla_get_u8(info->attrs[LISP_GNL_ATTR_MAPF]);
+	cfg->mc_map_ttl = nla_get_u32(info->attrs[LISP_GNL_ATTR_MAPTTL]);
 
 	return 0;
 out:

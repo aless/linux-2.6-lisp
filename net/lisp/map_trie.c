@@ -1320,6 +1320,7 @@ static int fn_trie_dump_me(t_key key, int plen, struct list_head *meh,
 			     plen,
 			     &me->rlocs,
 			     me->flags,
+			     me->jiffies_exp,
 			     NLM_F_MULTI) < 0) {
 			cb->args[5] = i;
 			return -1;
@@ -1419,6 +1420,7 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 	struct leaf *l;
 	struct map_entry *me, *new_me;
 	struct list_head *me_head = NULL;
+	unsigned long j;
 
 	if (plen > 32)
 		return -EINVAL;
@@ -1452,7 +1454,10 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 		if (new_me == NULL)
 			goto err;
 
+		j = jiffies;
 		new_me->flags = cfg->mc_map_flags;
+		new_me->jiffies = j;
+		new_me->jiffies_exp = j + cfg->mc_map_ttl * 60 * HZ;
 		INIT_LIST_HEAD(&new_me->rlocs);
 		INIT_RCU_HEAD(&new_me->rcu);
 		list_add_rcu(&cfg->mc_rloc->list, &new_me->rlocs);

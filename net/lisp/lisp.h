@@ -29,6 +29,8 @@ struct map_entry {
 	struct list_head	rlocs;
 	atomic_t		rloc_cnt;
 	__u8			flags;
+	unsigned long		jiffies;	/* creation timestamp */
+	unsigned long		jiffies_exp;	/* expiration timestamp */
 };
 
 struct lisp_tunnel {
@@ -56,6 +58,7 @@ struct map_config {
 	struct rloc_entry	*mc_rloc;
 	unsigned int		mc_rloc_cnt;
 	__u8			mc_map_flags;
+	__u32			mc_map_ttl;	/* mapping ttl (minutes) */
 };
 
 struct map_result {

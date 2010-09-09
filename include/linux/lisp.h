@@ -83,6 +83,7 @@ enum {
 	LISP_GNL_ATTR_UNSPEC,
 	LISP_GNL_ATTR_MAP,
 	LISP_GNL_ATTR_MAPF,
+	LISP_GNL_ATTR_MAPTTL,
 	__LISP_GNL_ATTR_MAX,
 };
 #define LISP_GNL_ATTR_MAX (__LISP_GNL_ATTR_MAX - 1)
@@ -103,6 +104,7 @@ enum {
 static struct nla_policy lisp_gnl_policy[LISP_GNL_ATTR_MAX + 1] = {
 	[LISP_GNL_ATTR_MAP]	= { .type = NLA_NESTED },
 	[LISP_GNL_ATTR_MAPF]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_MAPTTL]	= { .type = NLA_U32 },
 };
 
 static struct nla_policy lisp_gnl_map_policy[LISP_GNL_ATTR_MAP_MAX + 1] = {

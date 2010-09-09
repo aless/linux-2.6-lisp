@@ -99,12 +99,23 @@ rloc_noreachable:
 
 int dump_map(struct sk_buff *skb, u32 pid, u32 seq, struct genl_family *family,
 	     __be32 dst, int dst_len, struct list_head *rlocs,
-	     unsigned int mapf, unsigned int flags)
+	     unsigned int mapf, unsigned long jiffies_exp,
+	     unsigned int flags)
 {
 	void *msg_head;
 	int err;
 	struct rloc_entry *re;
 	struct nlattr *mp;
+	unsigned long j = jiffies;
+	struct timeval tv;
+	unsigned int min = 0;
+
+	if (time_after(jiffies_exp, j))
+		jiffies_to_timeval(jiffies_exp - j, &tv);
+	else {
+		tv.tv_sec = 0;
+	}
+	min = tv.tv_sec ? tv.tv_sec / 60 : 0;
 
 	msg_head = genlmsg_put(skb, pid, seq, family,
 			       flags, LISP_GNL_CMD_SHOWMAP);
@@ -114,6 +125,7 @@ int dump_map(struct sk_buff *skb, u32 pid, u32 seq, struct genl_family *family,
 	}
 
 	NLA_PUT_U8(skb, LISP_GNL_ATTR_MAPF, mapf);
+	NLA_PUT_U32(skb, LISP_GNL_ATTR_MAPTTL, min);
 
 	mp = nla_nest_start(skb, LISP_GNL_ATTR_MAP);
 
