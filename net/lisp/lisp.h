@@ -16,9 +16,9 @@ struct rloc_entry {
 	struct list_head	local_list;
 	struct rcu_head		rcu;
 	__be32			rloc;
-	int			priority;
-	int			weight;
-	unsigned char		flags;
+	__u8			priority;
+	__u8			weight;
+	__u8			flags;
 };
 
 struct map_entry {
@@ -28,7 +28,7 @@ struct map_entry {
 	__be32			mask;
 	struct list_head	rlocs;
 	atomic_t		rloc_cnt;
-	unsigned char		flags;
+	__u8			flags;
 };
 
 struct lisp_tunnel {
@@ -51,15 +51,15 @@ struct lisp_net {
 };
 
 struct map_config {
-	u8			mc_dst_len;
+	__u8			mc_dst_len;
 	__be32			mc_dst;
 	struct rloc_entry	*mc_rloc;
-	int			mc_rloc_cnt;
-	unsigned char		mc_map_flags;
+	unsigned int		mc_rloc_cnt;
+	__u8			mc_map_flags;
 };
 
 struct map_result {
-	unsigned char		prefixlen;
+	__u8			prefixlen;
 	struct map_entry	*map;
 	struct rloc_entry	*rloc;
 };
