@@ -434,7 +434,7 @@ static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 
 	/* The mappings added manually are assumed to be usable
 	   and rechable until verification */
-	mc.mc_map_flags |= LISP_MAP_F_STATIC | LISP_MAP_F_UP;
+	mc.mc_map_flags |= LISP_MAP_F_UP;
 
 	rcu_read_lock();
 
