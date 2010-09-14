@@ -214,24 +214,55 @@ void lisp_map_free(struct rcu_head *head)
 	kfree(map);
 }
 
-static void __lisp_map_del(struct map_entry *map)
+int lisp_map_add(struct net *net, struct map_config *cfg)
 {
-	struct rloc_entry *rloc, *rtmp;
-	int cnt = atomic_read(&map->rloc_cnt);
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	struct lisp_tunnel *tun;
+	struct flowi fl;
+	struct map_result mr;
+	int err;
 
-	if (cnt > 0) {
-		list_for_each_entry_safe(rloc, rtmp, &map->rlocs, list)
-			lisp_rloc_del(rloc);
+	pr_debug("LISP: add map eid:%x/%d rloc:%x\n", cfg->mc_dst,
+		 cfg->mc_dst_len, cfg->mc_rloc->rloc);
+
+	rcu_read_lock();
+
+	/* check if rloc is local */
+	tun = lisp_tunnel_lookup_dst(net, htonl(cfg->mc_rloc->rloc));
+	if (tun) {
+		spin_lock_bh(&lin->lock);
+		list_add_tail_rcu(&cfg->mc_rloc->local_list, &lin->local_rlocs);
+		spin_unlock_bh(&lin->lock);
+		cfg->mc_map_flags |= LISP_MAP_F_LOCAL;
 	}
-	list_del_rcu(&map->list);
-	call_rcu(&map->rcu, lisp_map_free);
+
+	/* if maping exists, add rloc to it */
+	fl.fl4_dst = htonl(ntohl(cfg->mc_dst));
+	err = map_table_lookup(lin->maps, &fl, &mr);
+	if (err != 1)
+		if (cfg->mc_dst_len == mr.prefixlen) {
+			lisp_rloc_append(mr.map, cfg->mc_rloc);
+			rcu_read_unlock();
+			return 0;
+		}
+
+	err = map_table_insert(lin->maps, cfg);
+
+	rcu_read_unlock();
+
+	return err;
 }
 
-static void lisp_map_del(struct lisp_net *lin, struct map_entry *map)
+int lisp_map_del(struct net *net, struct map_config *cfg)
 {
-	spin_lock_bh(&lin->lock);
-	__lisp_map_del(map);
-	spin_unlock_bh(&lin->lock);
+	struct lisp_net *lin = net_generic(net, lisp_net_id);
+	int err;
+
+	rcu_read_lock();
+	err = map_table_delete(lin->maps, cfg);
+	rcu_read_unlock();
+
+	return err;
 }
 
 static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
@@ -419,48 +450,18 @@ out:
 static int lisp_gnl_doit_addmap(struct sk_buff *skb, struct genl_info *info)
 {
 	struct net *net = genl_info_net(info);
-	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_config mc;
-	struct map_result mr;
-	struct lisp_tunnel *tun;
-	struct flowi fl;
 	int err;
 
 	err = lisp_parse_gnlparms(info, &mc);
 	if (err)
 		goto out;
 
-	pr_debug("LISP: add map eid:%x/%d rloc:%x\n", mc.mc_dst,
-		 mc.mc_dst_len, mc.mc_rloc->rloc);
-
 	/* The mappings added manually are assumed to be usable
 	   and rechable until verification */
 	mc.mc_map_flags |= LISP_MAP_F_UP;
 
-	rcu_read_lock();
-
-	/* check if rloc is local */
-	tun = lisp_tunnel_lookup_dst(net, htonl(mc.mc_rloc->rloc));
-	if (tun) {
-		spin_lock_bh(&lin->lock);
-		list_add_tail_rcu(&mc.mc_rloc->local_list, &lin->local_rlocs);
-		spin_unlock_bh(&lin->lock);
-		mc.mc_map_flags |= LISP_MAP_F_LOCAL;
-	}
-
-	/* if maping exists, add rloc to it */
-	fl.fl4_dst = htonl(ntohl(mc.mc_dst));
-	err = map_table_lookup(lin->maps, &fl, &mr);
-	if (err != 1)
-		if (mc.mc_dst_len == mr.prefixlen) {
-			lisp_rloc_append(mr.map, mc.mc_rloc);
-			rcu_read_unlock();
-			return 0;
-		}
-
-	err = map_table_insert(lin->maps, &mc);
-
-	rcu_read_unlock();
+	return lisp_map_add(net, &mc);
 out:
 	return err;
 }
@@ -476,7 +477,6 @@ static struct genl_ops lisp_gnl_ops_addmap = {
 static int lisp_gnl_doit_delmap(struct sk_buff *skb, struct genl_info *info)
 {
 	struct net *net = genl_info_net(info);
-	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_config cfg;
 	int err;
 
@@ -491,11 +491,7 @@ static int lisp_gnl_doit_delmap(struct sk_buff *skb, struct genl_info *info)
 	if (cfg.mc_dst == 0 || cfg.mc_dst_len == 0)
 		goto out;
 
-	cfg.mc_dst = cfg.mc_dst;
-	cfg.mc_dst_len = cfg.mc_dst_len;
-	rcu_read_lock();
-	err = map_table_delete(lin->maps, &cfg);
-	rcu_read_unlock();
+	return lisp_map_del(net, &cfg);
 out:
 	return err;
 }
