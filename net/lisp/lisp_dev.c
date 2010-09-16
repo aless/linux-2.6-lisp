@@ -208,12 +208,6 @@ static void lisp_rloc_del(struct rloc_entry *rloc)
 	call_rcu(&rloc->rcu, lisp_rloc_free);
 }
 
-void lisp_map_free(struct rcu_head *head)
-{
-	struct map_entry *map = container_of(head, struct map_entry, rcu);
-	kfree(map);
-}
-
 int lisp_map_add(struct net *net, struct map_config *cfg)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
