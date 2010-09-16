@@ -46,7 +46,7 @@
 
 #include <net/netlink.h>
 #include <net/genetlink.h>
-#include "map_lookup.h"
+
 #include "lisp.h"
 
 #define MAX_STAT_DEPTH 32

@@ -47,7 +47,7 @@
 #include <net/nexthop.h>
 
 #include <linux/lisp.h>
-#include "map_lookup.h"
+
 #include "lisp.h"
 
 struct map_entry *map_find(struct list_head *meh)
@@ -184,7 +184,7 @@ static void __rloc_free_mem(struct rcu_head *head)
 	kfree(rloc);
 }
 
-static void rloc_free_mem_rcu(struct rloc_entry *rloc)
+void rloc_free_mem_rcu(struct rloc_entry *rloc)
 {
 	call_rcu(&rloc->rcu, __rloc_free_mem);
 }

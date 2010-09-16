@@ -68,12 +68,27 @@ struct map_result {
 };
 
 
-int lisp_map_add(struct net *net, struct map_config *cfg);
-int lisp_map_del(struct net *net, struct map_config *cfg);
-int lisp_map_show(struct net *net, struct genl_family *gnl_family,
-		  struct sk_buff *skb, struct netlink_callback *cb);
+extern int lisp_map_add(struct net *net, struct map_config *cfg);
+extern int lisp_map_del(struct net *net, struct map_config *cfg);
+extern int lisp_map_show(struct net *net, struct genl_family *gnl_family,
+			 struct sk_buff *skb, struct netlink_callback *cb);
 
-int lisp_nl_init(void);
-void lisp_nl_cleanup(void);
+/* Exported by map_semantics.c */
+extern struct map_entry *map_find(struct list_head *meh);
+extern int map_semantic_match(struct list_head *head,
+			      const struct flowi *flp,
+			      struct map_result *res, int prefixlen);
+extern int release_map(struct map_entry *map);
+extern int dump_map(struct sk_buff *skb, u32 pid, u32 seq,
+		    struct genl_family *family,
+		    __be32 dst, int dst_len, struct list_head *rlocs,
+		    unsigned int mapf, unsigned long jiffies_exp,
+		    unsigned int flags);
+extern int release_rloc(struct map_entry *map, struct map_config *cfg);
+extern void rloc_free_mem_rcu(struct rloc_entry *rloc);
+
+/* Exported by lisp_netlink.c */
+extern int lisp_nl_init(void);
+extern void lisp_nl_cleanup(void);
 
 #endif /* _LISP_H */
