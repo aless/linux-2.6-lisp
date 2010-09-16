@@ -67,4 +67,13 @@ struct map_result {
 	struct rloc_entry	*rloc;
 };
 
+
+int lisp_map_add(struct net *net, struct map_config *cfg);
+int lisp_map_del(struct net *net, struct map_config *cfg);
+int lisp_map_show(struct net *net, struct genl_family *gnl_family,
+		  struct sk_buff *skb, struct netlink_callback *cb);
+
+int lisp_nl_init(void);
+void lisp_nl_cleanup(void);
+
 #endif /* _LISP_H */
