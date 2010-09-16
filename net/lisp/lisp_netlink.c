@@ -125,7 +125,8 @@ static int lisp_gnl_doit_delmap(struct sk_buff *skb, struct genl_info *info)
 	if (cfg.mc_dst == 0 || cfg.mc_dst_len == 0)
 		goto out;
 
-	return lisp_map_del(net, &cfg);
+	err = lisp_map_del(net, &cfg);
+	rloc_free_mem_rcu(cfg.mc_rloc);
 out:
 	return err;
 }
