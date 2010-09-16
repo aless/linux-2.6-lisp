@@ -37,7 +37,7 @@
 #include <linux/inetdevice.h>
 #include <net/inet_ecn.h>
 
-#include "lisp.h"
+#include "lisp_core.h"
 #include "map_trie.h"
 
 static void lisp_dev_setup(struct net_device *dev);

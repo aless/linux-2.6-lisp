@@ -8,6 +8,6 @@ endif
 
 ccflags-y := $(LISP_DBG_FLAGS)
 
-lisp-objs += lisp_dev.o lisp_netlink.o map_semantics.o map_trie.o
+lisp-objs += lisp_core.o lisp_netlink.o map_semantics.o map_trie.o
 
 obj-$(CONFIG_LISP) += lisp.o

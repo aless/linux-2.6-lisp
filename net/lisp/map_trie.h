@@ -2,7 +2,7 @@
 #include <net/flow.h>
 #include <net/genetlink.h>
 
-#include "lisp.h"
+#include "lisp_core.h"
 
 extern void map_hash_init(void);
 extern struct map_table *map_hash_table(void);

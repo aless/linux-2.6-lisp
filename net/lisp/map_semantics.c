@@ -48,7 +48,7 @@
 
 #include <linux/lisp.h>
 
-#include "lisp.h"
+#include "lisp_core.h"
 
 struct map_entry *map_find(struct list_head *meh)
 {

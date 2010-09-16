@@ -47,7 +47,7 @@
 #include <net/netlink.h>
 #include <net/genetlink.h>
 
-#include "lisp.h"
+#include "lisp_core.h"
 
 #define MAX_STAT_DEPTH 32
 

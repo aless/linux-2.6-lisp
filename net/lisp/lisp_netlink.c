@@ -18,8 +18,7 @@
 #include <net/genetlink.h>
 #include <linux/lisp.h>
 
-#include "lisp.h"
-#include "map_trie.h"
+#include "lisp_core.h"
 
 /* family definition */
 static struct genl_family lisp_gnl_family = {
