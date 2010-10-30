@@ -36,9 +36,12 @@
 #include <net/genetlink.h>
 #include <linux/inetdevice.h>
 #include <net/inet_ecn.h>
+#include <linux/timer.h>
 
 #include "lisp_core.h"
 #include "map_trie.h"
+
+extern int map_table_walk(struct map_table *tb, void *cb_fn);
 
 static void lisp_dev_setup(struct net_device *dev);
 
@@ -383,6 +386,57 @@ static int lisp_tunnel_ioctl(struct net_device *dev, struct ifreq *ifr,
 done:
 	return err;
 }
+
+static void lisp_map_gc_cb(struct map_entry *me, struct lisp_gctimer_data *cb)
+{
+	unsigned long j = jiffies;
+	int err;
+
+	printk(KERN_INFO "gc_cb: %p %lu a:%lu", me, me->jiffies_del, j);
+
+	if (me->jiffies_del <= j) {
+		struct map_config cfg;
+
+		printk(KERN_INFO "deleting expired: %x %x %d", me->eid, ntohl(htonl(me->eid)), inet_mask_len(htonl(me->mask)));
+
+		cfg.mc_dst = htonl(me->eid);
+		cfg.mc_dst_len = inet_mask_len(htonl(me->mask));
+		cfg.mc_rloc = NULL;
+
+		spin_lock_bh(&cb->lin->lock);
+		err = map_table_delete(cb->lin->maps, &cfg);
+		spin_unlock_bh(&cb->lin->lock);
+		printk(KERN_INFO "delete: %d", err);
+		return;
+	}
+
+	if (!(me->flags&LISP_MAP_F_STATIC) && 
+	    me->flags&LISP_MAP_F_UP &&
+	    me->jiffies_exp <= j) {
+		printk(KERN_INFO "aplicando a k:%p r:%x c:%lu e:%lu a:%lu\n", me, me->eid, me->jiffies, me->jiffies_exp, j);
+		/* locking missing */
+		spin_lock_bh(&cb->lin->lock);
+		me->flags &= ~LISP_MAP_F_UP;
+		spin_unlock_bh(&cb->lin->lock);
+
+	}
+}
+
+static void lisp_map_gc(unsigned long data)
+{
+	struct lisp_net *lin = (struct lisp_net *)data;
+	struct lisp_gctimer_data cb_data;
+
+	cb_data.lin = lin;
+	cb_data.cb_fn = &lisp_map_gc_cb;
+	memset(cb_data.args, 0, sizeof(cb_data.args));
+
+        printk(KERN_INFO "timer0: ns %ld %ld\n", cb_data.args[1], cb_data.args[2] );
+        printk(KERN_INFO "timer: ns %p\n", lin);
+	map_table_walk(lin->maps, &cb_data);
+        mod_timer(&lin->mapgc_timer, jiffies + MAPGC_DELAY);
+}
+
 
 /*****************************************************************************
  * LISP socket
@@ -866,6 +920,12 @@ static int __net_init lisp_init_net(struct net *net)
 	if (err)
 		goto err_reg_dev;
 
+        init_timer(&lin->mapgc_timer);
+        lin->mapgc_timer.expires = jiffies + MAPGC_DELAY;
+        lin->mapgc_timer.data = (unsigned long)lin;
+        lin->mapgc_timer.function = lisp_map_gc;
+        add_timer(&lin->mapgc_timer);
+
 	return 0;
 
 err_reg_dev:
@@ -891,6 +951,8 @@ static void __net_exit lisp_exit_net(struct net *net)
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	int res;
 	LIST_HEAD(list);
+
+	del_timer_sync(&lin->mapgc_timer);
 
 	spin_lock_bh(&lin->lock);
 	rcu_read_lock();
@@ -951,6 +1013,7 @@ static void __exit lisp_exit(void)
 	lisp_nl_cleanup();
 	unregister_pernet_device(&lisp_net_ops);
 	sock_unregister(PF_LISP);
+	//del hash?
 }
 
 module_init(lisp_init);

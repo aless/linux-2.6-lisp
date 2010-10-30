@@ -4,6 +4,9 @@
  *			EID-to-RLOC database and cache. This code is directly
  *			adapted from fib_trie.
  *
+ *			This file is wrong. We should use the available code 
+ *			directly or write generic trie code.
+ *
  *	Author: Alex Lorca <alex.lorca@gmail.com>
  *
  *	This program is free software; you can redistribute it and/or
@@ -1410,6 +1413,104 @@ int map_table_dump(struct map_table *tb, struct genl_family *family,
 
 	return skb->len;
 }
+/*****************************************************************/
+
+#define MAP_DEL 0
+
+static int fn_trie_dump_me_n(t_key key, int plen, struct list_head *meh,
+			   struct map_table *tb, struct lisp_gctimer_data *cb)
+{
+	int i, s_i;
+	struct map_entry *me;
+	__be32 xkey = htonl(key);
+
+	s_i = cb->args[5];
+	i = 0;
+
+	/* rcu_read_lock is hold by caller */
+
+	//printk(KERN_INFO "dump");
+	list_for_each_entry_rcu(me, meh, list) {
+		if (i < s_i) {
+			i++;
+			continue;
+		}
+
+		cb->cb_fn(me, cb);
+
+		i++;
+	}
+	cb->args[5] = i;
+	return 0;
+}
+
+static int fn_trie_dump_leaf_n(struct leaf *l, struct map_table *tb,
+			       struct lisp_gctimer_data *cb)
+{
+	struct leaf_info *li;
+	struct hlist_node *node;
+	int i, s_i;
+	//printk(KERN_INFO "dump_leaf");
+	s_i = cb->args[4];
+	i = 0;
+
+	/* rcu_read_lock is hold by caller */
+	hlist_for_each_entry_rcu(li, node, &l->list, hlist) {
+		if (i < s_i) {
+			i++;
+			continue;
+		}
+
+		if (i > s_i)
+			cb->args[5] = 0;
+
+		if (list_empty(&li->datalh))
+			continue;
+
+		if (fn_trie_dump_me_n(l->key, li->plen, &li->datalh,
+				      tb, cb) < 0) {
+			cb->args[4] = i;
+			return -1;
+		}
+		i++;
+	}
+
+	cb->args[4] = i;
+	return 0;
+}
+
+int map_table_walk(struct map_table *tb, struct lisp_gctimer_data *cb)
+{
+	struct leaf *l;
+	struct trie *t = (struct trie *) tb->tb_data;
+	//t_key key = 0;
+	int count = 0;
+	//printk(KERN_INFO "dump_walk");
+	rcu_read_lock();
+	/* Dump starting at last key.
+	 * Note: 0.0.0.0/0 (ie default) is first key.
+	 */
+	l = trie_firstleaf(t);
+
+	while (l) {
+		cb->args[2] = l->key;
+		if (fn_trie_dump_leaf_n(l, tb, cb) < 0) {
+			cb->args[3] = count;
+			rcu_read_unlock();
+			return -1;
+		}
+
+		++count;
+		l = trie_nextleaf(l);
+		memset(&cb->args[4], 0,
+		       sizeof(cb->args) - 4*sizeof(cb->args[0]));
+	}
+	cb->args[3] = count;
+	rcu_read_unlock();
+
+	return 0;
+}
+/*****************************************************************/
 
 int map_table_insert(struct map_table *tb, struct map_config *cfg)
 {
@@ -1458,6 +1559,9 @@ int map_table_insert(struct map_table *tb, struct map_config *cfg)
 		new_me->flags = cfg->mc_map_flags;
 		new_me->jiffies = j;
 		new_me->jiffies_exp = j + cfg->mc_map_ttl * 60 * HZ;
+		new_me->jiffies_del = new_me->jiffies_exp + MAP_DEL * 60 * HZ;
+		new_me->eid = key;
+		new_me->mask = mask;
 		INIT_LIST_HEAD(&new_me->rlocs);
 		INIT_RCU_HEAD(&new_me->rcu);
 		list_add_rcu(&cfg->mc_rloc->list, &new_me->rlocs);
@@ -1504,6 +1608,8 @@ int map_table_delete(struct map_table *tb, struct map_config *cfg)
 
 	key = key & mask;
 	l = trie_find_node(t, key);
+
+	pr_debug("Delete %08x/%d %p\n", key, plen, cfg->mc_rloc);
 
 	if (!l)
 		return -ESRCH;

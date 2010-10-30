@@ -10,6 +10,7 @@
 #define HASH_SIZE        16
 #define HASH(addr) (((__force u32)addr^((__force u32)addr>>4))&0xF)
 
+#define MAPGC_DELAY 30 * HZ
 
 struct rloc_entry {
 	struct list_head	list;
@@ -31,6 +32,7 @@ struct map_entry {
 	__u8			flags;
 	unsigned long		jiffies;	/* creation timestamp */
 	unsigned long		jiffies_exp;	/* expiration timestamp */
+	unsigned long		jiffies_del;	/* expiration timestamp */
 };
 
 struct lisp_tunnel {
@@ -50,6 +52,14 @@ struct lisp_net {
 	struct map_table	*maps;
 	struct net_device	*fb_tunnel_dev;	/* Fallback tunnel */
 	struct list_head	local_rlocs;
+	struct timer_list	mapgc_timer;
+};
+
+struct lisp_gctimer_data {
+	struct net		*net;
+	struct lisp_net		*lin;
+	long   			args[6];
+	void (*cb_fn)(struct map_entry *me, struct lisp_gctimer_data *cb);
 };
 
 struct map_config {
