@@ -161,6 +161,10 @@ static struct genl_ops lisp_gnl_ops_showmap = {
 	.dumpit = lisp_gnl_dumpit_showmap,
 };
 
+static struct genl_multicast_group lisp_mcgrp = {
+	.name = LISP_GNL_MCGRP_NAME,
+};
+
 int lisp_nl_init(void)
 {
 	int err;
@@ -178,6 +182,10 @@ int lisp_nl_init(void)
 		goto out_unregister_nl;
 
 	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_showmap);
+	if (err)
+		goto out_unregister_nl;
+
+	err = genl_register_mc_group(&lisp_gnl_family, &lisp_mcgrp);
 	if (err)
 		goto out_unregister_nl;
 

@@ -77,6 +77,7 @@ struct lisphdr {
 
 #define LISP_GNL_NAME "LISP"
 #define LISP_GNL_VERSION 1
+#define LISP_GNL_MCGRP_NAME "lisp_mcgrp"
 
 /* Attributes */
 enum {
