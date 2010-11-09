@@ -100,5 +100,10 @@ extern void rloc_free_mem_rcu(struct rloc_entry *rloc);
 /* Exported by lisp_netlink.c */
 extern int lisp_nl_init(void);
 extern void lisp_nl_cleanup(void);
+extern void lisp_gnl_notify_cachemiss(struct flowi *fl);
+
+
+__be32 lisp_rloc_lookup(struct net *net, struct flowi *fl);
+
 
 #endif /* _LISP_H */

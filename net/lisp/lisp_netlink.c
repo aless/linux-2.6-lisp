@@ -139,6 +139,69 @@ static struct genl_ops lisp_gnl_ops_delmap = {
 	.dumpit = NULL,
 };
 
+static int lisp_gnl_doit_getmap(struct sk_buff *skb, struct genl_info *info)
+{
+	struct net *net = dev_net(skb->dev);
+	struct map_config cfg;
+	int cnt, err;
+	unsigned char len;
+	struct flowi fl;
+	__be32 dst;
+	struct sk_buff *msg;
+	struct nlattr *nest, *att;
+	void *hdr;
+
+	nla_for_each_nested(att, info->attrs[LISP_GNL_ATTR_MAP], cnt) {
+		switch(nla_type(att)) {
+		case LISP_GNL_ATTR_MAP_EID:
+			fl.fl4_dst = nla_get_u32(att);
+			break;
+		case LISP_GNL_ATTR_MAP_EIDLEN:
+			len = nla_get_u8(att);
+			break;
+		}
+	}
+
+	fl.fl4_src = 0;
+
+	err = -ESRCH;
+	dst = lisp_rloc_lookup(net, &fl);
+
+	if (dst == 0)
+		goto out;
+
+        msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
+        if (!msg) {
+                err = -ENOMEM;
+                goto out;
+        }
+
+	hdr = genlmsg_put(msg, info->snd_pid, info->snd_seq, &lisp_gnl_family, 0, LISP_GNL_CMD_GETMAP);
+
+	nest = nla_nest_start(msg, LISP_GNL_ATTR_MAP);
+
+	nla_put_u32(msg, LISP_GNL_ATTR_MAP_RLOC, dst);
+
+	nla_nest_end(msg, nest);
+
+	genlmsg_end(msg, hdr);
+
+	return genlmsg_unicast(genl_info_net(info), msg, info->snd_pid);
+
+out_free:
+	nlmsg_free(msg);
+out:
+	return err;
+}
+
+static struct genl_ops lisp_gnl_ops_getmap = {
+	.cmd = LISP_GNL_CMD_GETMAP,
+	.flags = 0,
+	.policy = lisp_gnl_policy,
+	.doit = lisp_gnl_doit_getmap,
+	.dumpit = NULL,
+};
+
 static int lisp_gnl_dumpit_showmap(struct sk_buff *skb,
 				   struct netlink_callback *cb)
 {
@@ -165,6 +228,50 @@ static struct genl_multicast_group lisp_mcgrp = {
 	.name = LISP_GNL_MCGRP_NAME,
 };
 
+void lisp_gnl_notify_cachemiss(struct flowi *fl)
+{
+	struct sk_buff *skb;
+	int err = 1;
+	void *msg_head;
+
+	skb = genlmsg_new(NLMSG_GOODSIZE, GFP_ATOMIC);
+	if (skb == NULL)
+		goto failure;
+
+        /* create the message headers */
+	msg_head = genlmsg_put(skb, 0, 0, &lisp_gnl_family, 0, LISP_GNL_CMD_EV_CM);
+	if (msg_head == NULL) {
+		err = -ENOMEM;
+		goto nla_put_failure;
+	}
+
+	NLA_PUT_U32(skb, LISP_GNL_ATTR_CM_SADDR, fl->nl_u.ip4_u.saddr);
+	NLA_PUT_U32(skb, LISP_GNL_ATTR_CM_DADDR, fl->nl_u.ip4_u.daddr);
+
+	err = genlmsg_end(skb, msg_head);
+        if (err < 0)
+		goto nla_put_failure;
+
+	err = genlmsg_multicast(skb, 0, lisp_mcgrp.id, GFP_ATOMIC);
+
+       /* If there are no listeners, genlmsg_multicast may return non-zero
+         * value.
+         */
+	if (err != 0) {
+		pr_debug(KERN_INFO "error on genlmsg_multicast %i\n", err);
+		goto failure;
+	}
+
+	pr_debug(KERN_INFO "send ok: %d\n", err);
+	return;
+
+nla_put_failure:
+	pr_debug(KERN_INFO "send failure\n");
+	nlmsg_free(skb);
+failure:
+	return;
+}
+
 int lisp_nl_init(void)
 {
 	int err;
@@ -178,6 +285,10 @@ int lisp_nl_init(void)
 		goto out_unregister_nl;
 
 	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_delmap);
+	if (err)
+		goto out_unregister_nl;
+
+	err = genl_register_ops(&lisp_gnl_family, &lisp_gnl_ops_getmap);
 	if (err)
 		goto out_unregister_nl;
 

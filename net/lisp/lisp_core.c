@@ -168,7 +168,7 @@ failed_free:
 	return NULL;
 }
 
-static __be32 lisp_rloc_lookup(struct net *net, struct flowi *fl)
+__be32 lisp_rloc_lookup(struct net *net, struct flowi *fl)
 {
 	struct lisp_net *lin = net_generic(net, lisp_net_id);
 	struct map_result mr;
@@ -392,12 +392,12 @@ static void lisp_map_gc_cb(struct map_entry *me, struct lisp_gctimer_data *cb)
 	unsigned long j = jiffies;
 	int err;
 
-	printk(KERN_INFO "gc_cb: %p %lu a:%lu", me, me->jiffies_del, j);
+	pr_debug(KERN_INFO "gc_cb: map_entry:%p exp:%lu act::%lu", me, me->jiffies_del, j);
 
-	if (me->jiffies_del <= j) {
+	if (!(me->flags&LISP_MAP_F_STATIC) && me->jiffies_del <= j) {
 		struct map_config cfg;
 
-		printk(KERN_INFO "deleting expired: %x %x %d", me->eid, ntohl(htonl(me->eid)), inet_mask_len(htonl(me->mask)));
+		pr_debug(KERN_INFO "deleting expired: %x %x %d", me->eid, ntohl(htonl(me->eid)), inet_mask_len(htonl(me->mask)));
 
 		cfg.mc_dst = htonl(me->eid);
 		cfg.mc_dst_len = inet_mask_len(htonl(me->mask));
@@ -406,19 +406,17 @@ static void lisp_map_gc_cb(struct map_entry *me, struct lisp_gctimer_data *cb)
 		spin_lock_bh(&cb->lin->lock);
 		err = map_table_delete(cb->lin->maps, &cfg);
 		spin_unlock_bh(&cb->lin->lock);
-		printk(KERN_INFO "delete: %d", err);
+		pr_debug(KERN_INFO "delete: %d", err);
 		return;
 	}
 
 	if (!(me->flags&LISP_MAP_F_STATIC) && 
 	    me->flags&LISP_MAP_F_UP &&
 	    me->jiffies_exp <= j) {
-		printk(KERN_INFO "aplicando a k:%p r:%x c:%lu e:%lu a:%lu\n", me, me->eid, me->jiffies, me->jiffies_exp, j);
-		/* locking missing */
+
 		spin_lock_bh(&cb->lin->lock);
 		me->flags &= ~LISP_MAP_F_UP;
 		spin_unlock_bh(&cb->lin->lock);
-
 	}
 }
 
@@ -431,8 +429,7 @@ static void lisp_map_gc(unsigned long data)
 	cb_data.cb_fn = &lisp_map_gc_cb;
 	memset(cb_data.args, 0, sizeof(cb_data.args));
 
-        printk(KERN_INFO "timer0: ns %ld %ld\n", cb_data.args[1], cb_data.args[2] );
-        printk(KERN_INFO "timer: ns %p\n", lin);
+        pr_debug(KERN_INFO "timer: ns %p\n", lin);
 	map_table_walk(lin->maps, &cb_data);
         mod_timer(&lin->mapgc_timer, jiffies + MAPGC_DELAY);
 }
@@ -739,9 +736,12 @@ static netdev_tx_t lisp_tunnel_xmit(struct sk_buff *skb, struct net_device *dev)
 		rcu_read_lock();
 		dst = htonl(lisp_rloc_lookup(net, &fl));
 		rcu_read_unlock();
-		if (dst == 0)
+		if (dst == 0) {
 			/* TODO: send a Map-Request (and packet cache?) */
+			pr_debug(KERN_INFO, "cache miss %x %x", fl.nl_u.ip4_u.daddr, fl.nl_u.ip4_u.saddr);
+			lisp_gnl_notify_cachemiss(&fl);
 			goto tx_drop;
+		}
 	}
 
 	{
