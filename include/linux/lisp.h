@@ -114,7 +114,7 @@ static struct nla_policy lisp_gnl_policy[LISP_GNL_ATTR_MAX + 1] = {
 
 static struct nla_policy lisp_gnl_map_policy[LISP_GNL_ATTR_MAP_MAX + 1] = {
 	[LISP_GNL_ATTR_MAP_EID]		= { .type = NLA_U32 },
-	[LISP_GNL_ATTR_MAP_EIDLEN]	= { .type = NLA_U8 },
+	[LISP_GNL_ATTR_MAP_EIDLEN]	= { .type = NLA_U16 },
 	[LISP_GNL_ATTR_MAP_RLOC]	= { .type = NLA_U32 },
 	[LISP_GNL_ATTR_MAP_WEIGHT]	= { .type = NLA_U8 },
 	[LISP_GNL_ATTR_MAP_PRIO]	= { .type = NLA_U8 },

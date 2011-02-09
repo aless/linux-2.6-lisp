@@ -457,7 +457,7 @@ static unsigned int udp4_portaddr_hash(struct net *net, __be32 saddr,
 }
 
 /* from udp.c */
-int udp_v4_get_port(struct sock *sk, unsigned short snum)
+static int udp_v4_get_port(struct sock *sk, unsigned short snum)
 {
 	unsigned int hash2_nulladdr =
 		udp4_portaddr_hash(sock_net(sk), htonl(INADDR_ANY), snum);

@@ -53,7 +53,7 @@ static int lisp_parse_gnlparms(struct genl_info *info, struct map_config *cfg)
 			cfg->mc_dst = nla_get_u32(att);
 			break;
 		case LISP_GNL_ATTR_MAP_EIDLEN:
-			cfg->mc_dst_len = nla_get_u8(att);
+			cfg->mc_dst_len = nla_get_u16(att);
 			break;
 		case LISP_GNL_ATTR_MAP_RLOC:
 			re->rloc = ntohl(nla_get_u32(att));
@@ -205,7 +205,7 @@ static struct genl_ops lisp_gnl_ops_getmap = {
 static int lisp_gnl_dumpit_showmap(struct sk_buff *skb,
 				   struct netlink_callback *cb)
 {
-	struct net *net = dev_net(skb->dev);
+	struct net *net = sock_net(skb->sk);
 	int err;
 
 	err = lisp_map_show(net, &lisp_gnl_family, skb, cb);

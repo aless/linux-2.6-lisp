@@ -63,7 +63,7 @@ struct lisp_gctimer_data {
 };
 
 struct map_config {
-	__u8			mc_dst_len;
+	__u16			mc_dst_len;
 	__be32			mc_dst;
 	struct rloc_entry	*mc_rloc;
 	unsigned int		mc_rloc_cnt;
