@@ -647,7 +647,7 @@ static int lisp_create(struct net *net, struct socket *sock,
 
 	sk->sk_protocol = protocol;
 	sk->sk_destruct = lisp_destruct;
-	udp_sk(sk)->encap_type = LISP_ENCAPTYPE_UDP;
+	udp_sk(sk)->encap_type = UDP_ENCAP_LISP;
 	udp_sk(sk)->encap_rcv = lisp_udp_encap_rcv;
 
 	release_sock(sk);

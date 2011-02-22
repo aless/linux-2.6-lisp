@@ -34,6 +34,7 @@ struct udphdr {
 #define UDP_ENCAP_ESPINUDP_NON_IKE	1 /* draft-ietf-ipsec-nat-t-ike-00/01 */
 #define UDP_ENCAP_ESPINUDP	2 /* draft-ietf-ipsec-udp-encaps-06 */
 #define UDP_ENCAP_L2TPINUDP	3 /* rfc2661 */
+#define UDP_ENCAP_LISP		4 /* draft-ietf-lisp-09 */
 
 #ifdef __KERNEL__
 #include <net/inet_sock.h>

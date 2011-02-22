@@ -6,7 +6,6 @@
 #include <linux/rculist.h>
 #include <linux/if_tunnel.h>
 
-#define LISP_ENCAPTYPE_UDP 1
 #define HASH_SIZE        16
 #define HASH(addr) (((__force u32)addr^((__force u32)addr>>4))&0xF)
 
